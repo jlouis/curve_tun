@@ -22,11 +22,12 @@ Throughout the description, we assume a keypair `(C, c)` for the client and `(S,
 
 | Client  | Server     |
 |---------|------------|
-| 1. Generate (C', c') | |
-| 2. Handshake: send (C', 0, Box[0'](c' -> S)) | |
-| | 3. Generate (S', s') |
-| | 4. Cookie ack: send Box[S', K](s -> C') |
-| 5. Vouch: (K, Box[C,V](c' -> S')) | |
-| 6. Msg: Box[...](c' -> S') | |
-| | 7. Msg: Box[...](s' -> C') |
+| 1. Generate `(C', c')` | |
+| 2. Handshake: send `(C', 0, Box[0'](c' -> S))` | |
+| | 3. Generate `(S', s')` |
+| | 4. Cookie ack: send `Box[S', K](s -> C')` |
+| 5. Vouch: send `(K, Box[C,V](c' -> S'))` | |
+| *bi-directional flow from here on out* | |
+| 6. Msg: send `Box[...](c' -> S')` | |
+| | 7. Msg: send `Box[...](s' -> C')` |
 
