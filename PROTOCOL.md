@@ -1,5 +1,7 @@
 # Protocol Specification of CurveTun
 
+Current version 1.0:
+
 The purpose of `curve_tun` is to provide a secure socket communication channel over TCP. That is, the goal we are trying to fulfill is the same as the `ssl` application, but without using the complexity of `ssl`. The approach we take is to leverage the work in `CurveCP` by Dan J. Bernstein in order to provide a secure channel over TCP. Another important inspiration are OTR and its ratchet construction for forward secrecy.
 
 This document describes the protocol specification itself. It is split into two parts. The first part describes the high-level cryptographic construction in the protocol which gives enough information to validate the protocol design itself from a cryptographic perspective. Next follows the actual data contents which describes further low level handling, which is not important for a cryptographic perspective. The specification and protocol is kept Erlang-agnostic, so it can be implemented easily by other languages. In particular, we have opted for a protocol that is easy to parse with a binary parser, and we have tried hard to eliminate any kind of parsing ambiguity, as this usually means fewer venues for errors.
@@ -18,6 +20,7 @@ There are a number of things I'd like to address at some point in the protocol:
 
 * The ephemeral keys are in-memory for long-running connections. If we have a BGP connection, it will last for days. This runs the problem that the ephemeral key never ever changes which means we keep the key material around for a long time. This is a security problem. A future version of the protocol will ratchet the key material forward in order to cripple these attacks.
 * I would like to implement ideas of Axolotl into the protocol. This provides an excellent way to ratchet the key material while also protecting keys.
+* Handle processing of large messages (i.e., messages that can't fit into a single packet).
 
 # Protocol overview
 
@@ -55,6 +58,42 @@ From step 6 and onwards, the message flow is bidirectional. Until connection ter
 
 This part describes the protocol contents in detail. Here we address some of the typical low-level protocol details, which are not that necessary to understand the high-level protocol construction.
 
+## General protocol packet structure:
+
+All packets are encoded with `{packet, 2}` (for non-Erlangers, this means packets are encoded as: `<<L:16/integer-big, Payload:L/binary>>`, that is 2 bytes of big-endian length followed by that many bytes of payload). Thus, the maximal packet size is 64k, and this puts limits on the size of the message in a packet. The precise message size is mentioned in the section for packets carrying messages. The 2 bytes length is the *only* length given in packets. The rest of the packet contains fixed-size lengths and everything else can be derived from the general message length. The reason for this is to avoid typical heartbleed-like attacks, where sizes are misinterpreted.
+
+In the following we use `C` as a public-key and `Cs` as the secret key of the public key `C`.
+
 ### Hello packets:
 
-todo.
+The initial packet has the following structure:
+
+	Box = box(<<0:512/integer>>, S, Cs')
+	H = <<108,9,175,178,138,169,250,252,
+		C:32/binary,
+		Box/binary>>
+
+The first 8 bytes are randomly picked and identifies the connection type as a Version 1.0. It identifies we are speaking the protocol correctly from the client side. Then follows the pubkey and then follows the box, encoding 512 bits of 0. This allows graceful protocol extension in the future.
+
+### Cookie packets:
+
+The cookie packet has the following structure:
+
+	K = secret_box(<<C':32/binary, Ss':32/binary>>, t),
+	Box = box(<<S':32/binary, K/binary>>, C', Ss),
+	Cookie = <<28,69,220,185,65,192,227,246, Box/binary>>
+
+The 8 bytes are randomly picked and identifies the stream in the other direction as version 1.0. It allows us to roll new versions of the protocol later if needed.
+
+### Vouch packets
+
+todo
+
+### Message packets
+
+todo
+
+# Nonce handling
+
+todo
+
