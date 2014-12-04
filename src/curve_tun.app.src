@@ -1,0 +1,15 @@
+{application, curve_tun,
+ [{description, "Socket tunnels encrypted via the NaCl library (Curve 25519)"}
+ ,{vsn, "0.1.0"}
+ ,{registered, [curve_tun_sup]}
+ ,{mod, {'curve_tun_app', []}}
+ ,{applications,
+   [kernel
+   ,stdlib
+   
+   ,enacl
+   ]}
+ ,{env,[
+        {vault_providers, [curve_tun_vault_dummy]}]}
+ ,{modules, []}
+ ]}.

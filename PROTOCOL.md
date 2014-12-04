@@ -10,7 +10,7 @@ Everywhere in this document, we use Erlang notation for the binary specification
 
 # Deviations from TCP
 
-This protocol is *NOT* a stream protocol. It works as a messaging protocol, where parties exchange messages between two endpoints. That is, a message M of K bytes sent over the connection is guaranteed to arrive in one piece M of K bytes in the other end. This choice is deliberate. While it removes the ability to use `gen_nacl` as a replacement for TCP in the first place, it is usually a far better kind of messaging construction for Erlang programs.
+This protocol is *NOT* a stream protocol. It works as a messaging protocol, where parties exchange messages between two endpoints. That is, a message M of K bytes sent over the connection is guaranteed to arrive in one piece M of K bytes in the other end. This choice is deliberate. While it removes the ability to use `curve_tun` as a replacement for TCP in the first place, it is usually a far better kind of messaging construction for Erlang programs.
 
 Later versions of the protocol may define a `stream` option which can reinstate the stream-oriented messaging if we so please, on top of the underlying cryptographic messaging system.
 

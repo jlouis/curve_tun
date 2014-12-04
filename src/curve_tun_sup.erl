@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc gen_nacl top level supervisor.
+%% @doc curve_tun top level supervisor.
 %% @end
 %%%-------------------------------------------------------------------
 
--module(gen_nacl_sup).
+-module(curve_tun_sup).
 
 -behaviour(supervisor).
 
@@ -35,7 +35,7 @@ init([]) ->
 %% Internal functions
 %%====================================================================
 vault_providers() ->
-    {ok, Modules} = application:get_env(gen_nacl, vault_providers),
+    {ok, Modules} = application:get_env(curve_tun, vault_providers),
     vault_providers(Modules).
     
 vault_providers([]) -> [];

@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc gen_nacl public API
+%% @doc curve_tun public API
 %% @end
 %%%-------------------------------------------------------------------
 
--module(gen_nacl_app).
+-module(curve_tun_app).
 
 -behaviour(application).
 
@@ -16,7 +16,7 @@
 %%====================================================================
 
 start(_StartType, _StartArgs) ->
-    gen_nacl_sup:start_link().
+    curve_tun_sup:start_link().
 
 %%--------------------------------------------------------------------
 stop(_State) ->

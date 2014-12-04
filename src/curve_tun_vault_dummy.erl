@@ -1,4 +1,4 @@
--module(gen_nacl_vault_dummy).
+-module(curve_tun_vault_dummy).
 
 -behaviour(gen_server).
 -define(SERVER, ?MODULE).
