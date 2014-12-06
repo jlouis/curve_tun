@@ -68,10 +68,9 @@ In the following we use `C` as a public-key and `Cs` as the secret key of the pu
 
 The initial packet has the following structure:
 
-	Box = box(<<0:512/integer>>, S, Cs')
-	H = <<108,9,175,178,138,169,250,252,
-		C:32/binary,
-		Box/binary>>
+	Nonce = HELLO_NONCE,
+	Box = box(<<0:512/integer>>, Nonce, S, Cs')
+	H = <<108,9,175,178,138,169,250,252, C:32/binary, Box/binary>>
 
 The first 8 bytes are randomly picked and identifies the connection type as a Version 1.0. It identifies we are speaking the protocol correctly from the client side. Then follows the pubkey and then follows the box, encoding 512 bits of 0. This allows graceful protocol extension in the future.
 
@@ -95,5 +94,20 @@ todo
 
 # Nonce handling
 
-todo
+The protocols security is hinging on the correct usage of a number of Nonce's or number-used-just-once. If ever a nonce is reused, the security of the protocol is greatly diminished to the point of breakage. Hence, this section lays out in detail how the nonce-values are generated.
+
+Like in CurveCP, there are four different nonce types involved:
+
+| Key Pair | Nonce Format |
+| ------------| ------------|
+| The servers long-term keypair `(S, s)`. The client knows `S` before making a connection | The string `<<"CurveCPK">> follow by a 16 byte compressed nonce |
+| The clients long-term keypair `(C, c)`. Some servers can differentiate connections based on `C` | The string `<<"CurveCPV">> followed by a 16 byte compressed nonce |
+| The servers short-term keypair `(S', s')`. This keypair provides forward secrecy. | The string <<"CurveCP-server-M">> followed by a 8 byte compressed nonce. This nonce represents a 64-bit *little-endian* number (for easy comparison) |
+| The clients short-term keypair `(C', c')`. Specific to the connection. | The string <<"CurveCP-client-">> followed by <<"H">>, <<"I">> and <<"M">> for Hello, Initiate and Message packets respectively. Then a 8 byte compressed nonce representing a 64 bit *little-endian* number (for easy comparison) |
+
+
+
+## Hello packets
+
+
 
