@@ -8,6 +8,14 @@ Build
 
     $ rebar3 compile
 
+Security
+-------------
+
+A cryptographic system is no more safe than its weakest link. There are two documents next to this one describing the used primitives and how the cryptographic safety is achieved. 
+
+* PROTOCOL.md — describes the protocol design, which owes much, if not everything, to Dan J. Bernstein.
+* IMPLEMENTATION.md — describes the Erlang implementation and its internal structure.
+
 Current status
 ------------------
 
