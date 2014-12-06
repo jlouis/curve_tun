@@ -11,10 +11,10 @@ Build
 Current status
 ------------------
 
-We are currently constructing the curve_tun application. This means a lot of things doesn't work like they are intended to do. Most notably, there are currently no strong security guarantees provided by the code:
+We are currently constructing the curve_tun application. This means a lot of things doesn't work like they are intended to do. For many primitives, we opt to get something to the point of working first, and then attack the details later on. Most notably, there are currently no strong security guarantees provided by the code:
 
 * There is only a single vault, the dummy vault and it always use the same key material every time we want to encrypt something. This is chosen for simplicity, while we are focusing on other parts of the code base.
-
+* The current implementation opts to leak internal counters rather than encrypt them. This will be fixed in a future version.
 
 Background
 ------------------

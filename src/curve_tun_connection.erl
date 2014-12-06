@@ -39,16 +39,21 @@ init([]) ->
 %% @private
 ready({connect, Address, Port, Options}, From, ready) ->
     TcpOpts = [{packet, 2} | Options],
-
+    ServerKey = proplists:get_value(key, Options),
     case gen_tcp:connect(Address, Port, TcpOpts) of
         {error, Reason} ->
             {stop, normal, {error, Reason}, ready, ready};
         {ok, Socket} ->
-            EphPair = enacl:box_keypair(),
-            case send_hello(Socket, EphPair, proplists:get_value(key, Options)) of
+            #{ public := EC, secret := ECs } = enacl:box_keypair(),
+            case send_hello(Socket, ServerKey, EC, ECs) of
                 ok ->
                     inet:setopts(Socket, [{active, once}]),
-                    {noreply, initiating, #{ from => From, socket => Socket, keys => EphPair }};
+                    {noreply, initiating, #{
+                    	from => From,
+                    	socket => Socket,
+                    	public_key => EC,
+                    	secret_key => ECs,
+                    	peer_public_key => ServerKey }};
                 {error, Reason} ->
                     {stop, normal, {error, Reason}, ready, ready}
             end
@@ -71,9 +76,9 @@ handle_event(Event, Statename, State) ->
     error_logger:info_msg("Unknown event ~p in state ~p", [Event, Statename]),
     {next_state, Statename, State}.
 
-handle_info({tcp, S, Data}, Statename, #{ socket => S } = State) ->
+handle_info({tcp, S, Data}, Statename, #{ socket := S } = State) ->
     handle_packet(Data, Statename, State);
-handle_info({tcp_closed, S}, Statename, # { socket => S } = State) ->
+handle_info({tcp_closed, S}, Statename, # { socket := S } = State) ->
     handle_tcp_closed(Statename, State);
 handle_info(Info, Statename, State) ->
     error_logger:info_msg("Unknown info msg ~p in state ~p", [Info, Statename]),
@@ -86,18 +91,31 @@ code_change(_OldVsn, Statename, State, _Aux) ->
     {ok, Statename, State}.
 
 %% Internal handlers
-handle_packet(<<108,9,175,178,138,169,250,252, Pubkey:32/binary, Box/binary>>, accepting, S) ->
+handle_packet(<<108,9,175,178,138,169,250,252, Pubkey:32/binary, Box/binary>>, accepting, State) ->
 	todo;
-handle_packet(<<28,69,220,185,65,192,227,246, Box/binary>>, initiating, State) ->
-    %% Cookie packet
-    <<EphPeerPublicKey:32/binary, K/binary>> = enacl:box_open(Box, 
+handle_packet(<<28,69,220,185,65,192,227,246, N:16/binary, Box/binary>>, initiating,
+	#{ public_key := EC, secret_key := ECs, peer_public_key := S } = State) ->
+    Nonce = <<"CurveCPK", N/binary>>,
+    {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
+    todo.
+
+handle_tcp_closed(_Statename, _State) ->
+	todo.
+
 %% Internal functions
 
-hello_nonce() ->
-    binary:copy(<<0>>, enacl:box_nonce_size()).
+%% Nonce generation
+%% Short term nonces
+st_nonce(hello, client, N) -> <<"CurveCP-client-H", N:64/integer-little>>;
+st_nonce(initiate, client, N) -> <<"CurveCP-client-I", N:64/integer-little>>;
+st_nonce(msg, client, N) -> <<"CurveCP-client-M", N:64/integer-little>>;
+st_nonce(hello, server, N) -> <<"CurveCP-server-H", N:64/integer-little>>;
+st_nonce(initiate, server, N) -> <<"CurveCP-server-I", N:64/integer-little>>;
+st_nonce(msg, server, N) -> <<"CurveCP-server-M", N:64/integer-little>>.
 
-send_hello(Socket, #{ public := C, secret := Cs }, TargetKey) ->
-    Box = enacl:box(binary:copy(<<0>>, 64), hello_nonce(), TargetKey, Cs),
-    H = <<108,9,175,178,138,169,250,252, C:32/binary, Box/binary>>,
+send_hello(Socket, S, EC, ECs) ->
+    N = 0,
+    Box = enacl:box(binary:copy(<<0>>, 64), st_nonce(hello, client, N), S, ECs),
+    H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>,
     gen_tcp:send(Socket, H).
     
