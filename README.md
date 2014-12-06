@@ -3,12 +3,18 @@ curve_tun - TCP tunnels based on Curve25519
 
 This document describes the `curve_tun` application. It provides cryptographic tunnels over TCP in order to build secure communication between endpoints which provide *confidentiality* and *integrity* while also providing a certain amount of *availability*.
 
-
-
 Build
 -----
 
     $ rebar3 compile
+
+Current status
+------------------
+
+We are currently constructing the curve_tun application. This means a lot of things doesn't work like they are intended to do. Most notably, there are currently no strong security guarantees provided by the code:
+
+* There is only a single vault, the dummy vault and it always use the same key material every time we want to encrypt something. This is chosen for simplicity, while we are focusing on other parts of the code base.
+
 
 Background
 ------------------

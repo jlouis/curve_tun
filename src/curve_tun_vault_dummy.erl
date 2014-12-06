@@ -20,7 +20,7 @@ public_key() ->
     gen_server:call(?SERVER, public_key).
 
 init([]) ->
-    #{ public := Public, secret := Secret } = enacl:box_keypair(),
+    #{ public := Public, secret := Secret } = keypair(),
     {ok, #state { public_key = Public, secret_key = Secret }}.
 
 handle_call(public_key, _From, #state { public_key = PK } = State) ->
@@ -39,3 +39,13 @@ terminate(_Reason, _State) ->
     
 code_change(_OldVsn, State, _Aux) ->
     {ok, State}.
+
+%% For now, we always use the same keypair in the dummy vault.
+keypair() ->
+    #{
+      public => <<81,13,101,52,29,109,136,196,86,91,34,91,3,19,150,3,215,
+    		43,210,9,242,146,119,188,153,245,78,232,94,113,37,47>>,
+      secret => <<79,5,69,119,45,58,176,227,13,41,218,168,234,190,227,142,
+		160,217,229,207,248,33,10,84,184,133,218,238,93,40,44, 157>>
+    }.
+    
