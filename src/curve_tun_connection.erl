@@ -15,7 +15,8 @@
 ]).
 
 -record(curve_tun_socket, { pid :: pid() }).
--record(state, {}).
+%% The state record is currently unused...
+%% -record(state, {}). 
 
 connect(Address, Port, Options) ->
     {ok, Pid} = start_link(),
@@ -53,7 +54,7 @@ ready({connect, Address, Port, Options}, From, ready) ->
                     	socket => Socket,
                     	public_key => EC,
                     	secret_key => ECs,
-                    	peer_public_key => ServerKey }};
+                    	peer_lt_public_key => ServerKey }};
                 {error, Reason} ->
                     {stop, normal, {error, Reason}, ready, ready}
             end
@@ -77,7 +78,10 @@ handle_event(Event, Statename, State) ->
     {next_state, Statename, State}.
 
 handle_info({tcp, S, Data}, Statename, #{ socket := S } = State) ->
-    handle_packet(Data, Statename, State);
+    case handle_packet(Data, Statename, State) of
+        {ok, connected, NewState} -> {next_state, connected, wakeup(NewState)};
+        {ok, NewStateName, NewState} -> {next_state, NewStateName, NewState}
+    end;
 handle_info({tcp_closed, S}, Statename, # { socket := S } = State) ->
     handle_tcp_closed(Statename, State);
 handle_info(Info, Statename, State) ->
@@ -91,20 +95,23 @@ code_change(_OldVsn, Statename, State, _Aux) ->
     {ok, Statename, State}.
 
 %% Internal handlers
-handle_packet(<<108,9,175,178,138,169,250,252, Pubkey:32/binary, Box/binary>>, accepting, State) ->
-	todo;
 handle_packet(<<28,69,220,185,65,192,227,246, N:16/binary, Box/binary>>, initiating,
-	#{ public_key := EC, secret_key := ECs, peer_public_key := S } = State) ->
-    Nonce = <<"CurveCPK", N/binary>>,
+	#{ secret_key := ECs, peer_lt_public_key := S } = State) ->
+    Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
-    todo.
+    send_vouch(K, State#{ peer_public_key => ES }).
 
 handle_tcp_closed(_Statename, _State) ->
 	todo.
 
 %% Internal functions
 
+wakeup(#{ from := From } = State) ->
+    gen_fsm:reply(From, ok),
+    maps:remove(from, State).
+    
 %% Nonce generation
+
 %% Short term nonces
 st_nonce(hello, client, N) -> <<"CurveCP-client-H", N:64/integer-little>>;
 st_nonce(initiate, client, N) -> <<"CurveCP-client-I", N:64/integer-little>>;
@@ -113,9 +120,27 @@ st_nonce(hello, server, N) -> <<"CurveCP-server-H", N:64/integer-little>>;
 st_nonce(initiate, server, N) -> <<"CurveCP-server-I", N:64/integer-little>>;
 st_nonce(msg, server, N) -> <<"CurveCP-server-M", N:64/integer-little>>.
 
+lt_nonce(client, N) -> <<"CurveCPV", N/binary>>;
+lt_nonce(server, N) -> <<"CurveCPK", N/binary>>.
+
 send_hello(Socket, S, EC, ECs) ->
     N = 0,
     Box = enacl:box(binary:copy(<<0>>, 64), st_nonce(hello, client, N), S, ECs),
     H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>,
     gen_tcp:send(Socket, H).
+    
+send_vouch(Kookie, #{
+	socket := Socket,
+	public_key := EC,
+	secret_key := ECs,
+	peer_lt_public_key := S,
+	peer_public_key := ES } = State) ->
+    {Vouch, C, NonceLT} = curve_tun_vault:vouch(EC, S),
+    N = 1,
+    Nonce = st_nonce(initiate, client, N),
+    Box = enacl:box(<<C:32/binary, NonceLT/binary, Vouch/binary>>, Nonce, ES, ECs),
+    I = <<108,9,175,178,138,169,250,253, Kookie/binary, Nonce/binary, Box/binary>>,
+    ok = gen_tcp:send(Socket, I),
+    {ok, connected, State#{ c => 2 }}.
+
     
