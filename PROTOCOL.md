@@ -69,7 +69,7 @@ All packets are encoded with `{packet, 2}` (for non-Erlangers, this means packet
 The initial packet has the following structure:
 
 	Nonce = short_term_nonce(),
-	Box = box(<<0:512/integer>>, Nonce, S, ECs)
+	Box = box(<<0:512/integer>>, Nonce:8/binary, S, ECs)
 	H = <<108,9,175,178,138,169,250,252, EC:32/binary, Box/binary>>
 
 The first 8 bytes are randomly picked and identifies the connection type as a Version 1.0. It identifies we are speaking the protocol correctly from the client side. Then follows the pubkey and then follows the box, encoding 512 bits of 0. This allows graceful protocol extension in the future.
@@ -78,6 +78,7 @@ The first 8 bytes are randomly picked and identifies the connection type as a Ve
 
 The cookie packet has the following structure:
 
+	Nonce = long_term_nonce(),
 	K = secret_box(<<EC:32/binary, ESs:32/binary>>, Ts),
 	Box = box(<<ES:32/binary, K/binary>>, EC, Ss),
 	Cookie = <<28,69,220,185,65,192,227,246, Nonce:16/binary, Box/binary>>
@@ -91,7 +92,7 @@ Vouch packets from the client to the server have the following structure:
 	K = cookie(),
 	Nonce = short_term_nonce(),
 	NonceLT = long_term_nonce(),
-	V = box(<<EC/binary>>, NonceLT, S, Cs),
+	V = box(<<EC/binary>>, NonceLT:16/binary, S, Cs),
 	Box = box(<<C:32/binary, NonceLT:24/binary, V:48/binary>>),
 	Initiate = <<108,9,175,178,138,169,250,253, K:96/binary, Nonce:8/binary, Box/binary>>
 
@@ -100,7 +101,9 @@ Vouch packets from the client to the server have the following structure:
 Once the connection has been established, the messaging structure is much simpler. Messages have the obvious structure:
 
 	Nonce = short_term_nonce(),
-	Msg = box(M, Nonce, ES, ECs).
+	Msg = box(M, Nonce:8/binary, ES, ECs).
+
+The header of a message is `8+16 = 24` bytes. This makes the maximally sized message in the procotol `256 * 256 - 24 = 65512` bytes in size. Sending larger messages are possible if a higher-level implementation embeds chunking inside packets, but it is of no concern to the security structure of the protocol.
 
 # Nonce handling
 
