@@ -64,13 +64,21 @@ This part describes the protocol contents in detail. Here we address some of the
 
 All packets are encoded with `{packet, 2}` (for non-Erlangers, this means packets are encoded as: `<<L:16/integer-big, Payload:L/binary>>`, that is 2 bytes of big-endian length followed by that many bytes of payload). Thus, the maximal packet size is 64k, and this puts limits on the size of the message in a packet. The precise message size is mentioned in the section for packets carrying messages. The 2 bytes length is the *only* length given in packets. The rest of the packet contains fixed-size lengths and everything else can be derived from the general message length. The reason for this is to avoid typical heartbleed-like attacks, where sizes are misinterpreted.
 
+Keys in the protocol:
+
+* `C and Cs` are the clients long-term keys.
+* `S and Ss` are the servers long-term keys.
+* `EC and ECs` are *ephemeral* keys generated for the connection by the client.
+* `ES and ESs` are *ephemeral* keys generated for the connection by the server.
+
 ### Hello packets:
 
 The initial packet has the following structure:
 
-	Nonce = short_term_nonce(),
-	Box = box(<<0:512/integer>>, Nonce:8/binary, S, ECs)
-	H = <<108,9,175,178,138,169,250,252, EC:32/binary, Box/binary>>
+	N = 0,
+	Nonce = short_term_nonce(N),
+	Box = box(<<0:512/integer>>, Nonce, S, ECs)
+	H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>
 
 The first 8 bytes are randomly picked and identifies the connection type as a Version 1.0. It identifies we are speaking the protocol correctly from the client side. Then follows the pubkey and then follows the box, encoding 512 bits of 0. This allows graceful protocol extension in the future.
 
@@ -79,11 +87,13 @@ The first 8 bytes are randomly picked and identifies the connection type as a Ve
 The cookie packet has the following structure:
 
 	Nonce = long_term_nonce(),
-	K = secret_box(<<EC:32/binary, ESs:32/binary>>, Ts),
+	CNonce = <<"minute-k", Nonce:16/binary>>,
+	KBox = secret_box(<<EC:32/binary, ESs:32/binary>>, CNonce, Ts),
+	K = <<Nonce:16/binary, KBox/binary>>,
 	Box = box(<<ES:32/binary, K/binary>>, EC, Ss),
 	Cookie = <<28,69,220,185,65,192,227,246, Nonce:16/binary, Box/binary>>
 
-The 8 bytes are randomly picked and identifies the stream in the other direction as version 1.0. It allows us to roll new versions of the protocol later if needed.
+The 8 bytes are randomly picked and identifies the stream in the other direction as version 1.0. It allows us to roll new versions of the protocol later if needed. *Note* The long-term generated nonce is used twice in this packet with different prefixes. It is used once to make sure the cookie is protected, and once to make sure the packet is protected. The safety hinges on the safety of typical long_term nonce values, see further down for their construction.
 
 ### Vouch packets
 
