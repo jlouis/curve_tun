@@ -93,7 +93,7 @@ Vouch packets from the client to the server have the following structure:
 	Nonce = short_term_nonce(),
 	NonceLT = long_term_nonce(),
 	V = box(<<EC/binary>>, NonceLT:16/binary, S, Cs),
-	Box = box(<<C:32/binary, NonceLT:24/binary, V:48/binary>>),
+	Box = box(<<C:32/binary, NonceLT:24/binary, V:48/binary>>, ES, ECs),
 	Initiate = <<108,9,175,178,138,169,250,253, K:96/binary, Nonce:8/binary, Box/binary>>
 
 ### Message packets
