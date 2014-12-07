@@ -123,9 +123,19 @@ code_change(_OldVsn, Statename, State, _Aux) ->
     {ok, Statename, State}.
 
 %% Internal handlers
-handle_packet(<<108,9,175,178,138,169,250,253, K:96/binary, Nonce:8/binary, Box/binary>>,
-	accepting, State) ->
-    …;
+
+%% --------- Vouch
+handle_packet(<<108,9,175,178,138,169,250,253, K:96/binary, N:64/integer-little, Box/binary>>,
+	accepting, #{ socket := Sock, peer_public_key := EC, secret_key := ESs } = State) ->
+    Nonce = st_nonce(hello, client, N),
+    {ok, <<C:32/binary, NonceLT:16/binary, Vouch/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
+    true = curve_tun_registry:verify(Sock, C),
+    VNonce = lt_nonce(client, NonceLT),
+    {ok, <<EC:32/binary>>} = curve_tun_vault:box_open(Vouch, VNonce, C),
+    %% Everything matches, we can proceed to a connected state
+    {ok, connected, State};
+
+%% --------- Cookie
 handle_packet(<<28,69,220,185,65,192,227,246, N:16/binary, Box/binary>>, initiating,
 	#{ secret_key := ECs, peer_lt_public_key := S } = State) ->
     Nonce = lt_nonce(server, N),
@@ -164,10 +174,11 @@ send_hello(Socket, S, EC, ECs) ->
 send_cookie(Socket, EC) ->
     #{ public := ES, secret := ESs } = enacl:box_keypair(),
     Ts = curve_tun_cookie:key(),
-    CookieNonce = …,
+    SafeNonce = curve_tun_vault:safe_nonce(),
+    CookieNonce = <<"minute-k", SafeNonce/binary>>,
     K = enacl:secret_box(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
-    {Box, NonceLT} = curve_tun_vault:box(<<ES:32/binary, K/binary>>, EC),
-    Cookie = <<28,69,220,185,65,192,227,246, NonceLT:16/binary, Box/binary>>,
+    Box = curve_tun_vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
+    Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
     ok = gen_tcp:send(Socket, Cookie),
     ok.
 
