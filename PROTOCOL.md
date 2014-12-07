@@ -88,14 +88,18 @@ The first 8 bytes are randomly picked and identifies the connection type as a Ve
 
 The cookie packet has the following structure:
 
-	Nonce = long_term_nonce(),
-	CNonce = <<"minute-k", Nonce:16/binary>>,
-	KBox = secret_box(<<EC:32/binary, ESs:32/binary>>, CNonce, Ts),
-	K = <<Nonce:16/binary, KBox/binary>>,
-	Box = box(<<ES:32/binary, K/binary>>, EC, Ss),
-	Cookie = <<28,69,220,185,65,192,227,246, Nonce:16/binary, Box/binary>>
+	Ts = curve_tun_cookie:key(),
+	SafeNonce = curve_tun_vault:safe_nonce(),
+	CookieNonce = <<"minute-k", SafeNonce/binary>>,
+
+	KBox = enacl:secret_box(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
+	K = <<SafeNonce:16/binary, KBox/binary>>,
+	Box = curve_tun_vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
+	Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
 
 The 8 bytes are randomly picked and identifies the stream in the other direction as version 1.0. It allows us to roll new versions of the protocol later if needed. *Note* The long-term generated nonce is used twice in this packet with different prefixes. It is used once to make sure the cookie is protected, and once to make sure the packet is protected. The safety hinges on the safety of typical long_term nonce values, see further down for their construction.
+
+*Note*: Once the `ES` key is in the hands of the client, the server has no need for the key anymore and it is thrown away.
 
 ### Vouch packets
 

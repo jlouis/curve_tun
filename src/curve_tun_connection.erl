@@ -124,19 +124,23 @@ code_change(_OldVsn, Statename, State, _Aux) ->
 
 %% Internal handlers
 
-%% --------- Vouch
-handle_packet(<<108,9,175,178,138,169,250,253, K:96/binary, N:64/integer-little, Box/binary>>,
-	accepting, #{ socket := Sock, peer_public_key := EC, secret_key := ESs } = State) ->
-    Nonce = st_nonce(hello, client, N),
-    {ok, <<C:32/binary, NonceLT:16/binary, Vouch/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
-    true = curve_tun_registry:verify(Sock, C),
-    VNonce = lt_nonce(client, NonceLT),
-    {ok, <<EC:32/binary>>} = curve_tun_vault:box_open(Vouch, VNonce, C),
-    %% Everything matches, we can proceed to a connected state
-    {ok, connected, State};
-
-%% --------- Cookie
-handle_packet(<<28,69,220,185,65,192,227,246, N:16/binary, Box/binary>>, initiating,
+handle_packet(<<108,9,175,178,138,169,250,253, % HELLO
+                K:96/binary, N:64/integer-little, Box/binary>>,
+	accepting, #{ socket := Sock, peer_public_key := EC } = State) ->
+    case unpack_cookie(K) of
+        {ok, EC, ESs} ->
+            Nonce = st_nonce(vouch, client, N),
+            {ok, <<C:32/binary, NonceLT:16/binary, Vouch/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
+            true = curve_tun_registry:verify(Sock, C),
+            VNonce = lt_nonce(client, NonceLT),
+            {ok, <<EC:32/binary>>} = curve_tun_vault:box_open(Vouch, VNonce, C),
+            %% Everything seems to be in order, go to connected state:
+            {ok, connected, State# { secret_key := ESs }};
+        {error, Reason} ->
+            {error, Reason}
+    end;
+handle_packet(<<28,69,220,185,65,192,227,246, % COOKIE
+                N:16/binary, Box/binary>>, initiating,
 	#{ secret_key := ECs, peer_lt_public_key := S } = State) ->
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
@@ -146,6 +150,13 @@ handle_tcp_closed(_Statename, _State) ->
 	todo.
 
 %% Internal functions
+
+unpack_cookie(<<Nonce:16/binary, Cookie/binary>>) ->
+    CNonce = lt_nonce(minute, Nonce),
+    case curve_tun_cookie:unpack(Cookie, CNonce) of
+        {ok, <<EC:32/binary, ESs:32/binary>>} -> {ok, EC, ESs};
+        {error, Reason} -> {error, Reason}
+    end.
 
 wakeup(#{ from := From } = State) ->
     gen_fsm:reply(From, ok),
@@ -161,6 +172,7 @@ st_nonce(hello, server, N) -> <<"CurveCP-server-H", N:64/integer-little>>;
 st_nonce(initiate, server, N) -> <<"CurveCP-server-I", N:64/integer-little>>;
 st_nonce(msg, server, N) -> <<"CurveCP-server-M", N:64/integer-little>>.
 
+lt_nonce(minute_k, N) -> <<"minute-k", N/binary>>;
 lt_nonce(client, N) -> <<"CurveCPV", N/binary>>;
 lt_nonce(server, N) -> <<"CurveCPK", N/binary>>.
 
@@ -173,10 +185,13 @@ send_hello(Socket, S, EC, ECs) ->
     
 send_cookie(Socket, EC) ->
     #{ public := ES, secret := ESs } = enacl:box_keypair(),
+
     Ts = curve_tun_cookie:key(),
     SafeNonce = curve_tun_vault:safe_nonce(),
-    CookieNonce = <<"minute-k", SafeNonce/binary>>,
-    K = enacl:secret_box(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
+    CookieNonce = lt_nonce(minute, SafeNonce),
+
+    KBox = enacl:secret_box(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
+    K = <<SafeNonce:16/binary, KBox/binary>>,
     Box = curve_tun_vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
     Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
     ok = gen_tcp:send(Socket, Cookie),
