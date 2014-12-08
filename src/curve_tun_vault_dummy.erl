@@ -4,7 +4,7 @@
 -define(SERVER, ?MODULE).
 
 -export([start_link/0]).
--export([public_key/0]).
+-export([public_key/0, box/3, box_open/3, safe_nonce/0, vouch/2]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -19,10 +19,26 @@ start_link() ->
 public_key() ->
     gen_server:call(?SERVER, public_key).
 
+box_open(Box, Nonce, SignatureKey) ->
+    gen_server:call(?SERVER, {box_open, Box, Nonce, SignatureKey}).
+    
+box(Msg, Nonce, PublicKey) ->
+    gen_server:call(?SERVER, {box, Msg, Nonce, PublicKey}).
+
+safe_nonce() ->
+    gen_server:call(?SERVER, safe_nonce).
+
+vouch(VouchKey, ServerKey) ->
+    gen_server:call(?SERVER, {vouch, VouchKey, ServerKey}).
+
 init([]) ->
     #{ public := Public, secret := Secret } = keypair(),
     {ok, #state { public_key = Public, secret_key = Secret }}.
 
+handle_call({box_open, Box, Nonce, SignatureKey}, _From, #state { secret_key = SK } = State) ->
+    {reply, enacl:box_open(Box, Nonce, SignatureKey, SK), State};
+handle_call({box, Msg, Nonce, PublicKey}, _From, #state { secret_key = SK } = State) ->
+    {reply, enacl:box(Msg, Nonce, PublicKey, SK), State};
 handle_call(public_key, _From, #state { public_key = PK } = State) ->
     {reply, PK, State}.
 
