@@ -55,7 +55,7 @@ ready({accept, LSock}, From, ready) ->
         {error, Reason} ->
             {stop, normal, {error, Reason}, ready, ready};
         {ok, Socket} ->
-            inet:setopts(Socket, [{active, once}]),
+            ok = inet:setopts(Socket, [{active, once}]),
             {ok, EC} = recv_hello(Socket),
             case send_cookie(Socket, EC) of
                 ok ->
@@ -105,7 +105,7 @@ handle_event(Event, Statename, State) ->
     {next_state, Statename, State}.
 
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
-    inet:setopts(Sock, [{active, once}]),
+    ok = inet:setopts(Sock, [{active, once}]),
     case handle_packet(Data, Statename, State) of
         {ok, connected, NewState} -> {next_state, connected, wakeup(NewState)};
         {ok, NewStateName, NewState} -> {next_state, NewStateName, NewState}
@@ -152,13 +152,13 @@ handle_tcp_closed(_Statename, _State) ->
 %% Internal functions
 
 unpack_cookie(<<Nonce:16/binary, Cookie/binary>>) ->
-    CNonce = lt_nonce(minute, Nonce),
+    CNonce = lt_nonce(minute_k, Nonce),
     Keys = curve_tun_cookie:recent_keys(),
     unpack_cookie_(Keys, CNonce, Cookie).
     
 unpack_cookie_([], _, _) -> {error, ecookie};
 unpack_cookie_([K | Ks], CNonce, Cookie) ->
-    case enacl:secret_box_open(Cookie, CNonce, K) of
+    case enacl:secretbox_open(Cookie, CNonce, K) of
         {ok, Msg} -> {ok, Msg};
         {error, verification_failed} ->
             unpack_cookie_(Ks, CNonce, Cookie)
@@ -195,10 +195,10 @@ send_cookie(Socket, EC) ->
 
     Ts = curve_tun_cookie:current_key(),
     SafeNonce = curve_tun_vault:safe_nonce(),
-    CookieNonce = lt_nonce(minute, SafeNonce),
+    CookieNonce = lt_nonce(minute_k, SafeNonce),
 
     %% Send the secret short term key roundtrip to the client under protection of a minute key
-    KBox = enacl:secret_box(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
+    KBox = enacl:secretbox(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
     K = <<SafeNonce:16/binary, KBox/binary>>,
     Box = curve_tun_vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
     Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
