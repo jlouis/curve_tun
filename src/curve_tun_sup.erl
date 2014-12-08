@@ -31,17 +31,19 @@ start_link() ->
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
     CookieSpec = ?CHILDW(curve_tun_cookie, 2000),
+    Registries = registry_providers(),
     Vaults = vault_providers(),
-    {ok, { {one_for_all, 3, 3600}, [CookieSpec] ++ Vaults ++ []} }.
+    {ok, { {one_for_all, 3, 3600}, [CookieSpec] ++ Vaults ++ Registries} }.
 
 %%====================================================================
 %% Internal functions
 %%====================================================================
 vault_providers() ->
     {ok, Modules} = application:get_env(curve_tun, vault_providers),
-    vault_providers(Modules).
+    lists:map(fun child/1, Modules).
     
-vault_providers([]) -> [];
-vault_providers([M|Ms]) ->
-    Child = {M, {M, start_link, []}, permanent, 5000, worker, [M]},
-    [Child | vault_providers(Ms)].
+registry_providers() ->
+    {ok, Modules} = application:get_env(curve_tun, registry_providers),
+    lists:map(fun child/1, Modules).
+
+child(M) -> ?CHILD(M).

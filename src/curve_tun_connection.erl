@@ -46,44 +46,48 @@ start_link() ->
     
 %% @private
 init([]) ->
-    {ok, ready, ready}.
+    State = #{
+        vault => curve_tun_vault_dummy,
+        registry => curve_tun_simple_registry
+    },
+    {ok, ready, State}.
 
 
 %% @private
-ready({accept, LSock}, From, ready) ->
+ready({accept, LSock}, From, # { vault := Vault } = State) ->
     case gen_tcp:accept(LSock) of
         {error, Reason} ->
-            {stop, normal, {error, Reason}, ready, ready};
+            {stop, normal, {error, Reason}, ready, State};
         {ok, Socket} ->
             ok = inet:setopts(Socket, [{active, once}]),
-            {ok, EC} = recv_hello(Socket),
-            case send_cookie(Socket, EC) of
+            {ok, EC} = recv_hello(Socket, Vault),
+            case send_cookie(Socket, EC, Vault) of
                 ok ->
                   inet:setopts(Socket, [{active, once}]),
-                  {noreply, accepting, #{ socket => Socket, from => From }};
+                  {noreply, accepting, State#{ socket => Socket, from => From }};
                 {error, Reason} ->
-                   {stop, normal, {error, Reason}, ready, ready}
+                   {stop, normal, {error, Reason}, ready, State}
            end
     end;
-ready({connect, Address, Port, Options}, From, ready) ->
+ready({connect, Address, Port, Options}, From, State) ->
     TcpOpts = [{packet, 2} | Options],
     ServerKey = proplists:get_value(key, Options),
     case gen_tcp:connect(Address, Port, TcpOpts) of
         {error, Reason} ->
-            {stop, normal, {error, Reason}, ready, ready};
+            {stop, normal, {error, Reason}, ready, State};
         {ok, Socket} ->
             #{ public := EC, secret := ECs } = enacl:box_keypair(),
             case send_hello(Socket, ServerKey, EC, ECs) of
                 ok ->
                     inet:setopts(Socket, [{active, once}]),
-                    {noreply, initiating, #{
+                    {noreply, initiating, State#{
                     	from => From,
                     	socket => Socket,
                     	public_key => EC,
                     	secret_key => ECs,
                     	peer_lt_public_key => ServerKey }};
                 {error, Reason} ->
-                    {stop, normal, {error, Reason}, ready, ready}
+                    {stop, normal, {error, Reason}, ready, State}
             end
     end.
     
@@ -126,14 +130,14 @@ code_change(_OldVsn, Statename, State, _Aux) ->
 
 handle_packet(<<108,9,175,178,138,169,250,253, % HELLO
                 K:96/binary, N:64/integer-little, Box/binary>>,
-	accepting, #{ socket := Sock, peer_public_key := EC } = State) ->
+	accepting, #{ socket := Sock, peer_public_key := EC, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
         {ok, EC, ESs} ->
             Nonce = st_nonce(vouch, client, N),
             {ok, <<C:32/binary, NonceLT:16/binary, Vouch/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
-            true = curve_tun_registry:verify(Sock, C),
+            true = Registry:verify(Sock, C),
             VNonce = lt_nonce(client, NonceLT),
-            {ok, <<EC:32/binary>>} = curve_tun_vault:box_open(Vouch, VNonce, C),
+            {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
             %% Everything seems to be in order, go to connected state:
             {ok, connected, State# { secret_key := ESs }};
         {error, Reason} ->
@@ -189,32 +193,32 @@ send_hello(Socket, S, EC, ECs) ->
     H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>,
     ok = gen_tcp:send(Socket, H).
     
-send_cookie(Socket, EC) ->
+send_cookie(Socket, EC, Vault) ->
     %% Once ES is in the hands of the client, the server doesn't need it anymore
     #{ public := ES, secret := ESs } = enacl:box_keypair(),
 
     Ts = curve_tun_cookie:current_key(),
-    SafeNonce = curve_tun_vault:safe_nonce(),
+    SafeNonce = Vault:safe_nonce(),
     CookieNonce = lt_nonce(minute_k, SafeNonce),
 
     %% Send the secret short term key roundtrip to the client under protection of a minute key
     KBox = enacl:secretbox(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
     K = <<SafeNonce:16/binary, KBox/binary>>,
-    Box = curve_tun_vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
+    Box = Vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
     Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
     ok = gen_tcp:send(Socket, Cookie),
     ok.
 
-recv_hello(Socket) ->
+recv_hello(Socket, Vault) ->
     receive
         {tcp, Socket, <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>} ->
-            recv_hello_(EC, st_nonce(hello, client, N), Box);
+            recv_hello_(EC, st_nonce(hello, client, N), Box, Vault);
         {tcp, Socket, _Otherwise} ->
             {error, ehello}
    end.
 
-recv_hello_(EC, Nonce, Box) ->
-    {ok, <<0:512/integer>>} = curve_tun_vault:box_open(Box, Nonce, EC),
+recv_hello_(EC, Nonce, Box, Vault) ->
+    {ok, <<0:512/integer>>} = Vault:box_open(Box, Nonce, EC),
     {ok, EC}.
 
 send_vouch(Kookie, #{
@@ -222,8 +226,9 @@ send_vouch(Kookie, #{
 	public_key := EC,
 	secret_key := ECs,
 	peer_lt_public_key := S,
-	peer_public_key := ES } = State) ->
-    {Vouch, C, NonceLT} = curve_tun_vault:vouch(EC, S),
+	peer_public_key := ES,
+	vault := Vault } = State) ->
+    {Vouch, C, NonceLT} = Vault:vouch(EC, S),
     N = 1,
     Nonce = st_nonce(initiate, client, N),
     Box = enacl:box(<<C:32/binary, NonceLT/binary, Vouch/binary>>, Nonce, ES, ECs),
