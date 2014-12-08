@@ -153,9 +153,15 @@ handle_tcp_closed(_Statename, _State) ->
 
 unpack_cookie(<<Nonce:16/binary, Cookie/binary>>) ->
     CNonce = lt_nonce(minute, Nonce),
-    case curve_tun_cookie:unpack(Cookie, CNonce) of
-        {ok, <<EC:32/binary, ESs:32/binary>>} -> {ok, EC, ESs};
-        {error, Reason} -> {error, Reason}
+    Keys = curve_tun_cookie:recent_keys(),
+    unpack_cookie_(Keys, CNonce, Cookie).
+    
+unpack_cookie_([], _, _) -> {error, ecookie};
+unpack_cookie_([K | Ks], CNonce, Cookie) ->
+    case enacl:secret_box_open(Cookie, CNonce, K) of
+        {ok, Msg} -> {ok, Msg};
+        {error, verification_failed} ->
+            unpack_cookie_(Ks, CNonce, Cookie)
     end.
 
 wakeup(#{ from := From } = State) ->
@@ -184,12 +190,14 @@ send_hello(Socket, S, EC, ECs) ->
     ok = gen_tcp:send(Socket, H).
     
 send_cookie(Socket, EC) ->
+    %% Once ES is in the hands of the client, the server doesn't need it anymore
     #{ public := ES, secret := ESs } = enacl:box_keypair(),
 
-    Ts = curve_tun_cookie:key(),
+    Ts = curve_tun_cookie:current_key(),
     SafeNonce = curve_tun_vault:safe_nonce(),
     CookieNonce = lt_nonce(minute, SafeNonce),
 
+    %% Send the secret short term key roundtrip to the client under protection of a minute key
     KBox = enacl:secret_box(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
     K = <<SafeNonce:16/binary, KBox/binary>>,
     Box = curve_tun_vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
