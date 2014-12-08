@@ -221,6 +221,12 @@ recv_hello_(EC, Nonce, Box, Vault) ->
     {ok, <<0:512/integer>>} = Vault:box_open(Box, Nonce, EC),
     {ok, EC}.
 
+vouch(Msg, S, Vault) ->
+    Nonce = Vault:safe_nonce(),
+    VNonce = lt_nonce(client, Nonce),
+    Box = Vault:box(Msg, VNonce, S),
+    {Box, Vault:public_key(), Nonce}.
+
 send_vouch(Kookie, #{
 	socket := Socket,
 	public_key := EC,
@@ -228,7 +234,7 @@ send_vouch(Kookie, #{
 	peer_lt_public_key := S,
 	peer_public_key := ES,
 	vault := Vault } = State) ->
-    {Vouch, C, NonceLT} = Vault:vouch(EC, S),
+    {Vouch, C, NonceLT} = vouch(EC, S, Vault),
     N = 1,
     Nonce = st_nonce(initiate, client, N),
     Box = enacl:box(<<C:32/binary, NonceLT/binary, Vouch/binary>>, Nonce, ES, ECs),
@@ -236,4 +242,3 @@ send_vouch(Kookie, #{
     ok = gen_tcp:send(Socket, I),
     {ok, connected, State#{ c => 2 }}.
 
-    

@@ -15,7 +15,7 @@
 
 -define(SERVER, ?MODULE).
 -record(state, {
-	dict :: dict:dict(inet:ip_addres(), binary())}).
+	dict :: dict:dict(inet:ip_address(), binary())}).
 
 %% API
 start_link() ->

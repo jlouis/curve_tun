@@ -4,7 +4,7 @@
 -define(SERVER, ?MODULE).
 
 -export([start_link/0]).
--export([public_key/0, box/3, box_open/3, safe_nonce/0, vouch/2]).
+-export([public_key/0, box/3, box_open/3, safe_nonce/0]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
@@ -27,9 +27,6 @@ box(Msg, Nonce, PublicKey) ->
 
 safe_nonce() ->
     gen_server:call(?SERVER, safe_nonce).
-
-vouch(VouchKey, ServerKey) ->
-    gen_server:call(?SERVER, {vouch, VouchKey, ServerKey}).
 
 init([]) ->
     #{ public := Public, secret := Secret } = keypair(),
