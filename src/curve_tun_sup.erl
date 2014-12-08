@@ -35,10 +35,12 @@ init([]) ->
 %% Internal functions
 %%====================================================================
 vault_providers() ->
+    Cookie = {cookie, {curve_tun_cookie, start_link, []}, permanent, 2000, worker, [curve_tun_cookie]},
+
     {ok, Modules} = application:get_env(curve_tun, vault_providers),
-    vault_providers(Modules).
+    vault_providers([Cookie] ++ Modules).
     
 vault_providers([]) -> [];
 vault_providers([M|Ms]) ->
-    Child = {M, {M, start_link, []}, permanent, 5000, workers, [M]},
+    Child = {M, {M, start_link, []}, permanent, 5000, worker, [M]},
     [Child | vault_providers(Ms)].
