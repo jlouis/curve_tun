@@ -10,7 +10,8 @@
 
 -record(state, {
 	public_key :: binary(),
-	secret_key :: binary()
+	secret_key :: binary(),
+	counter :: non_neg_integer()
 }).
 
 start_link() ->
@@ -26,16 +27,20 @@ box(Msg, Nonce, PublicKey) ->
     gen_server:call(?SERVER, {box, Msg, Nonce, PublicKey}).
 
 safe_nonce() ->
-    gen_server:call(?SERVER, safe_nonce).
+    Counter = increment_counter(),
+    RandomBytes = enacl:randombytes(8),
+    <<Counter:64/integer, RandomBytes/binary>>.
 
 init([]) ->
     #{ public := Public, secret := Secret } = keypair(),
-    {ok, #state { public_key = Public, secret_key = Secret }}.
+    {ok, #state { public_key = Public, secret_key = Secret, counter = 0 }}.
 
 handle_call({box_open, Box, Nonce, SignatureKey}, _From, #state { secret_key = SK } = State) ->
     {reply, enacl:box_open(Box, Nonce, SignatureKey, SK), State};
 handle_call({box, Msg, Nonce, PublicKey}, _From, #state { secret_key = SK } = State) ->
     {reply, enacl:box(Msg, Nonce, PublicKey, SK), State};
+handle_call(increment_counter, _From, #state { counter = C } = State) ->
+    {reply, C, State#state { counter = C+1 }};
 handle_call(public_key, _From, #state { public_key = PK } = State) ->
     {reply, PK, State}.
 
@@ -61,4 +66,6 @@ keypair() ->
       secret => <<79,5,69,119,45,58,176,227,13,41,218,168,234,190,227,142,
 		160,217,229,207,248,33,10,84,184,133,218,238,93,40,44, 157>>
     }.
-    
+
+increment_counter() ->
+    gen_server:call(?SERVER, increment_counter).

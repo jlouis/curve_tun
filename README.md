@@ -23,7 +23,7 @@ We are currently constructing the curve_tun application. This means a lot of thi
 
 * There is only a single vault, the dummy vault and it always use the same key material every time we want to encrypt something. This is chosen for simplicity, while we are focusing on other parts of the code base.
 * The current implementation opts to leak internal counters rather than encrypt them. This will be fixed in a future version.
-* We don't honor the cookie packet at all, which we should for correct operation. The keys for the server connection are hidden *inside* the cookie, so its correct operation is important for the correct operation of the system as a whole.
+* safe_nonce() generation does not yet block-encrypt its counters.
 
 Background
 ------------------
