@@ -10,6 +10,7 @@
 -export([init/1, code_change/4, terminate/3, handle_info/3, handle_event/3, handle_sync_event/4]).
 
 -export([
+	closed/2, closed/3,
 	connected/2, connected/3,
 	initiating/2, initiating/3,
 	ready/2, ready/3
@@ -107,6 +108,12 @@ initiating(_Msg, _From, _State) ->
 initiating(_Msg, _) ->
     {stop, argh, ready}.
 
+closed(_Msg, _State) ->
+    {stop, argh, closed}.
+    
+closed({send, _}, _From, State) ->
+    {reply, {error, closed}, State}.
+
 connected(_M, _) ->
     {stop, argh, connected}.
 
@@ -126,10 +133,13 @@ handle_event(Event, Statename, State) ->
     {next_state, Statename, State}.
 
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
-    ok = inet:setopts(Sock, [{active, once}]),
     case handle_packet(Data, Statename, State) of
-        {ok, connected, NewState} -> {next_state, connected, wakeup(NewState)};
-        {ok, NewStateName, NewState} -> {next_state, NewStateName, NewState}
+        {Next, connected, NewState} ->
+            handle_socket(Sock, Next),
+            {next_state, connected, reply(ok, NewState)};
+        {Next, NewStateName, NewState} ->
+            handle_socket(Sock, Next),
+            {next_state, NewStateName, NewState}
     end;
 handle_info({tcp_closed, S}, Statename, # { socket := S } = State) ->
     handle_tcp_closed(Statename, State);
@@ -145,7 +155,10 @@ code_change(_OldVsn, Statename, State, _Aux) ->
 
 %% Internal handlers
 
-handle_packet(<<108,9,175,178,138,169,250,253, % HELLO
+handle_socket(Sock, next) -> inet:setopts(Sock, [{active, once}]);
+handle_socket(_Sock, hold) -> ok.
+
+handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
                 K:96/binary, N:64/integer-little, Box/binary>>,
 	accepting, #{ socket := Sock, peer_public_key := EC, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
@@ -156,7 +169,7 @@ handle_packet(<<108,9,175,178,138,169,250,253, % HELLO
             VNonce = lt_nonce(client, NonceLT),
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
             %% Everything seems to be in order, go to connected state:
-            {ok, connected, State# { secret_key := ESs }};
+            {hold, connected, State# { secret_key := ESs }};
         {error, Reason} ->
             {error, Reason}
     end;
@@ -165,10 +178,11 @@ handle_packet(<<28,69,220,185,65,192,227,246, % COOKIE
 	#{ secret_key := ECs, peer_lt_public_key := S } = State) ->
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
-    send_vouch(K, State#{ peer_public_key => ES }).
+    {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
+    {hold, connected, NState}.
 
-handle_tcp_closed(_Statename, _State) ->
-	todo.
+handle_tcp_closed(_Statename, State) ->
+    {next_state, closed, maps:remove(socket, State)}.
 
 %% Internal functions
 
@@ -185,8 +199,8 @@ unpack_cookie_([K | Ks], CNonce, Cookie) ->
             unpack_cookie_(Ks, CNonce, Cookie)
     end.
 
-wakeup(#{ from := From } = State) ->
-    gen_fsm:reply(From, ok),
+reply(M, #{ from := From } = State) ->
+    gen_fsm:reply(From, M),
     maps:remove(from, State).
     
 %% Nonce generation
@@ -257,10 +271,11 @@ send_vouch(Kookie, #{
     Box = enacl:box(<<C:32/binary, NonceLT/binary, Vouch/binary>>, Nonce, ES, ECs),
     I = <<108,9,175,178,138,169,250,253, Kookie/binary, Nonce/binary, Box/binary>>,
     ok = gen_tcp:send(Socket, I),
-    {ok, connected, State#{ c => 2 }}.
+    {ok, State#{ c => 2 }}.
 
 send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount } = State) ->
     Nonce = st_nonce(msg, client, NonceCount),
     Box = enacl:box(M, Nonce, P, Ks),
     M = <<109,27,57,203,246,90,17,180, Box/binary>>,
-    {gen_tcp:send(Socket, M), State#{ c := NonceCount+1 }}.
+    ok = gen_tcp:send(Socket, M),
+    {ok, State#{ c := NonceCount + 1}}.
