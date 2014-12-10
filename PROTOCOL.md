@@ -117,9 +117,10 @@ Vouch packets from the client to the server have the following structure:
 Once the connection has been established, the messaging structure is much simpler. Messages have the obvious structure:
 
 	Nonce = short_term_nonce(),
-	Msg = box(M, Nonce:8/binary, ES, ECs).
+	Box = box(M, Nonce:8/binary, ES, ECs),
+	Msg = <<109,27,57,203,246,90,17,180
 
-The header of a message is `8+16 = 24` bytes. This makes the maximally sized message in the procotol `256 * 256 - 24 = 65512` bytes in size. Sending larger messages are possible if a higher-level implementation embeds chunking inside packets, but it is of no concern to the security structure of the protocol.
+The header of a message is `8+8+16 = 32` bytes. This makes the maximally sized message in the procotol `256 * 256 - 32 = 65504` bytes in size. Sending larger messages are possible if a higher-level implementation embeds chunking inside packets, but it is of no concern to the security structure of the protocol.
 
 # Nonce handling
 

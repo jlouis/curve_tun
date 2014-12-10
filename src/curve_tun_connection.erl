@@ -1,7 +1,7 @@
 -module(curve_tun_connection).
 -behaviour(gen_fsm).
 
--export([connect/3, accept/1, listen/2]).
+-export([connect/3, accept/1, listen/2, send/2, close/1]).
 
 %% Private callbacks
 -export([start_link/0]).
@@ -10,8 +10,9 @@
 -export([init/1, code_change/4, terminate/3, handle_info/3, handle_event/3, handle_sync_event/4]).
 
 -export([
-	ready/2, ready/3,
-	initiating/2, initiating/3
+	connected/2, connected/3,
+	initiating/2, initiating/3,
+	ready/2, ready/3
 ]).
 
 -record(curve_tun_socket, { pid :: pid() }).
@@ -26,6 +27,12 @@ connect(Address, Port, Options) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+send(#curve_tun_socket { pid = Pid }, Msg) ->
+    gen_fsm:sync_send_event(Pid, {send, Msg}).
+
+close(#curve_tun_socket { pid = Pid }) ->
+    gen_fsm:sync_send_event(Pid, close).
 
 listen(Port, Opts) ->
     Options = [{packet, 2} | Opts],
@@ -99,6 +106,16 @@ initiating(_Msg, _From, _State) ->
 
 initiating(_Msg, _) ->
     {stop, argh, ready}.
+
+connected(_M, _) ->
+    {stop, argh, connected}.
+
+connected(close, _From, #{ socket := Sock } = State) ->
+    ok = gen_tcp:close(Sock),
+    {stop, normal, ok, connected, maps:remove(socket, State)};
+connected({send, M}, _From, State) ->
+    {Reply, NState} = send_msg(M, State),
+    {reply, Reply, NState}.
 
 handle_sync_event(Event, _From, Statename, State) ->
     error_logger:info_msg("Unknown sync_event ~p in state ~p", [Event, Statename]),
@@ -192,7 +209,7 @@ send_hello(Socket, S, EC, ECs) ->
     Box = enacl:box(binary:copy(<<0>>, 64), Nonce, S, ECs),
     H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>,
     ok = gen_tcp:send(Socket, H).
-    
+
 send_cookie(Socket, EC, Vault) ->
     %% Once ES is in the hands of the client, the server doesn't need it anymore
     #{ public := ES, secret := ESs } = enacl:box_keypair(),
@@ -242,3 +259,8 @@ send_vouch(Kookie, #{
     ok = gen_tcp:send(Socket, I),
     {ok, connected, State#{ c => 2 }}.
 
+send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount } = State) ->
+    Nonce = st_nonce(msg, client, NonceCount),
+    Box = enacl:box(M, Nonce, P, Ks),
+    M = <<109,27,57,203,246,90,17,180, Box/binary>>,
+    {gen_tcp:send(Socket, M), State#{ c := NonceCount+1 }}.
