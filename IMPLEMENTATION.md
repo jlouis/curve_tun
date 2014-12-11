@@ -4,6 +4,12 @@ The Erlang code uses the `enacl` library for all its low-level cryptographic wor
 
 This document describes the construction of the Erlang system.
 
+# General considerations
+
+Currently, our system does a miserable job at throwing out old key data. In particular, if an attacker can gain memory access to a system, he may be able to grab even very old key data and obtain it. We plan on creating more safe vaults with overwriting capability in the future, but for now, we use the Erlang subsystem for ease of use.
+
+# Specific processes
+
 ## Vault
 
 A clients key is kept in a specialized process called the *vault*. This process is the only one who stores the secret key of the system. No provision has been made to protect this process against scrutiny from the shell, so if you have shell-access to the Erlang system, the secret key is known.
@@ -12,10 +18,32 @@ The design, however, is such that you can hide the secret key in various ways in
 
 The vault can box and open boxes pertaining to the secret key of `curve_tun`. While doing so, it also constructs long-term Nonce's according to the PROTOCOL.md specification. It always returns the box and the used Nonce to make it easy to incorporate into packets.
 
-## Cookie key
+The vault tracks:
 
-A separate process maintain a cookie key generated at random. The key is cycled once in a while, but older keys are kept. This key is used to decrypt cookies when they come in from the client. If the key has been cycled in the meantime, the older keys are tried which protects against reusing cookies.
+* Public/Secret key pairs of long-term keys.
+* Counters for the long-term keys for nonce generation.
+* The nonce block-key for scrambling the counter so it doesn't leak out.
+
+## Cookie key process
+
+A separate process maintain a cookie key generated at random. The key is cycled once in a minute, but older keys are kept for a minute. This key is used to decrypt cookies when they come in from the client. If the key has been cycled in the meantime, the older keys are tried.
 
 The brilliance of the protocol is that cookies contain all information to construct the connection. So if used over a datagram protocol like UDP, the cookie acts like a SYN-cookie of TCP but encrypted. The client bears the burden of establishing the connection.
+
+The security implications are that once a key is recycled, it is gone. This means that while the server needs protection, it doesn't track keys long-term and thus is less of a problem.
+
+## Connection
+
+Connection processes implement an FSM which runs the connection system. There are the following two possible transition chains:
+
+	server: ready -> accepting -> connected
+	client: ready -> initiating -> connected
+	
+for servers and clients respectively. Furthermore, there is a 'closed' state we can transition to from any state if the TCP connection is shut down.
+
+The process implements something looks a *lot* like a gen_tcp connection, but it does differ in that it provides a message-oriented interface over the socket. Future implementations might reinvigorate the stream nature on top of this protocol.
+
+Multiple receivers are processed in FIFO order of their call to the `recv/1` function.
+
 
 
