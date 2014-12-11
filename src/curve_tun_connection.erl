@@ -1,7 +1,7 @@
 -module(curve_tun_connection).
 -behaviour(gen_fsm).
 
--export([connect/3, accept/1, listen/2, send/2, close/1]).
+-export([connect/3, accept/1, listen/2, send/2, close/1, recv/1]).
 
 %% Private callbacks
 -export([start_link/0]).
@@ -31,6 +31,9 @@ connect(Address, Port, Options) ->
 
 send(#curve_tun_socket { pid = Pid }, Msg) ->
     gen_fsm:sync_send_event(Pid, {send, Msg}).
+
+recv(#curve_tun_socket { pid = Pid }) ->
+    gen_fsm:sync_send_event(Pid, recv).
 
 close(#curve_tun_socket { pid = Pid }) ->
     gen_fsm:sync_send_event(Pid, close).
@@ -120,9 +123,12 @@ connected(_M, _) ->
 connected(close, _From, #{ socket := Sock } = State) ->
     ok = gen_tcp:close(Sock),
     {stop, normal, ok, connected, maps:remove(socket, State)};
+connected(recv, From, #{ socket := Sock } = State) ->
+    handle_socket(Sock, next),
+    {noreply, connected, State#{ recv_queue := queue:in(From) }};
 connected({send, M}, _From, State) ->
     {Reply, NState} = send_msg(M, State),
-    {reply, Reply, NState}.
+    {reply, Reply, connected, NState}.
 
 handle_sync_event(Event, _From, Statename, State) ->
     error_logger:info_msg("Unknown sync_event ~p in state ~p", [Event, Statename]),
@@ -135,8 +141,9 @@ handle_event(Event, Statename, State) ->
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
     case handle_packet(Data, Statename, State) of
         {Next, connected, NewState} ->
+            NextState = NewState#{ recv_queue => queue:new(), buf => undefined },
             handle_socket(Sock, Next),
-            {next_state, connected, reply(ok, NewState)};
+            {next_state, connected, reply(ok, NextState)};
         {Next, NewStateName, NewState} ->
             handle_socket(Sock, Next),
             {next_state, NewStateName, NewState}
@@ -158,6 +165,22 @@ code_change(_OldVsn, Statename, State, _Aux) ->
 handle_socket(Sock, next) -> inet:setopts(Sock, [{active, once}]);
 handle_socket(_Sock, hold) -> ok.
 
+handle_recv_queue(#{ recv_queue := Q, buf := Buf } = State) ->
+    case {queue:out(Q), Buf} of
+        {{{value, _Receiver}, _Q2}, undefined} ->
+            {next, connected, State};
+        {{{value, Receiver}, Q2}, Msg} ->
+            gen_fsm:reply(Receiver, Msg),
+            handle_recv_queue(State#{ recv_queue := Q2, buf := undefined });
+        {{empty, _Q2}, _} ->
+            {hold, connected, State}
+   end.
+
+handle_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>, % MSG
+	connected, #{ peer_public_key := P, secret_key := Ks, buf := undefined } = State) ->
+    Nonce = st_nonce(msg, client, N),
+    {ok, Msg} = enacl:box_open(Box, Nonce, P, Ks),
+    handle_recv_queue(State#{ buf := Msg });
 handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
                 K:96/binary, N:64/integer-little, Box/binary>>,
 	accepting, #{ socket := Sock, peer_public_key := EC, vault := Vault, registry := Registry } = State) ->
@@ -276,6 +299,6 @@ send_vouch(Kookie, #{
 send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount } = State) ->
     Nonce = st_nonce(msg, client, NonceCount),
     Box = enacl:box(M, Nonce, P, Ks),
-    M = <<109,27,57,203,246,90,17,180, Box/binary>>,
+    M = <<109,27,57,203,246,90,17,180, NonceCount:64/integer, Box/binary>>,
     ok = gen_tcp:send(Socket, M),
     {ok, State#{ c := NonceCount + 1}}.
