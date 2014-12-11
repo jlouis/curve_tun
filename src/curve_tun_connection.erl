@@ -182,7 +182,7 @@ handle_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>, % MSG
     {ok, Msg} = enacl:box_open(Box, Nonce, P, Ks),
     handle_recv_queue(State#{ buf := Msg });
 handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
-                K:96/binary, N:64/integer-little, Box/binary>>,
+                K:96/binary, N:64/integer, Box/binary>>,
 	accepting, #{ socket := Sock, peer_public_key := EC, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
         {ok, EC, ESs} ->
@@ -229,12 +229,12 @@ reply(M, #{ from := From } = State) ->
 %% Nonce generation
 
 %% Short term nonces
-st_nonce(hello, client, N) -> <<"CurveCP-client-H", N:64/integer-little>>;
-st_nonce(initiate, client, N) -> <<"CurveCP-client-I", N:64/integer-little>>;
-st_nonce(msg, client, N) -> <<"CurveCP-client-M", N:64/integer-little>>;
-st_nonce(hello, server, N) -> <<"CurveCP-server-H", N:64/integer-little>>;
-st_nonce(initiate, server, N) -> <<"CurveCP-server-I", N:64/integer-little>>;
-st_nonce(msg, server, N) -> <<"CurveCP-server-M", N:64/integer-little>>.
+st_nonce(hello, client, N) -> <<"CurveCP-client-H", N:64/integer>>;
+st_nonce(initiate, client, N) -> <<"CurveCP-client-I", N:64/integer>>;
+st_nonce(msg, client, N) -> <<"CurveCP-client-M", N:64/integer>>;
+st_nonce(hello, server, N) -> <<"CurveCP-server-H", N:64/integer>>;
+st_nonce(initiate, server, N) -> <<"CurveCP-server-I", N:64/integer>>;
+st_nonce(msg, server, N) -> <<"CurveCP-server-M", N:64/integer>>.
 
 lt_nonce(minute_k, N) -> <<"minute-k", N/binary>>;
 lt_nonce(client, N) -> <<"CurveCPV", N/binary>>;
@@ -244,7 +244,7 @@ send_hello(Socket, S, EC, ECs) ->
     N = 0,
     Nonce = st_nonce(hello, client, N),
     Box = enacl:box(binary:copy(<<0>>, 64), Nonce, S, ECs),
-    H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>,
+    H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>,
     ok = gen_tcp:send(Socket, H).
 
 send_cookie(Socket, EC, Vault) ->
@@ -265,7 +265,7 @@ send_cookie(Socket, EC, Vault) ->
 
 recv_hello(Socket, Vault) ->
     receive
-        {tcp, Socket, <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>} ->
+        {tcp, Socket, <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>} ->
             recv_hello_(EC, st_nonce(hello, client, N), Box, Vault);
         {tcp, Socket, _Otherwise} ->
             {error, ehello}

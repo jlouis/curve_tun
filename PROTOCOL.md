@@ -80,7 +80,7 @@ The initial packet has the following structure:
 	N = 0,
 	Nonce = st_nonce(hello, client, N),
 	Box = enacl:box(binary:copy(<<0>>, 64), Nonce, S, ECs),
-	H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer-little, Box/binary>>
+	H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>
 
 The first 8 bytes are randomly picked and identifies the connection type as a Version 1.0. It identifies we are speaking the protocol correctly from the client side. Then follows the pubkey and then follows the box, encoding 512 bits of 0. This allows graceful protocol extension in the future.
 
@@ -118,7 +118,7 @@ Once the connection has been established, the messaging structure is much simple
 
 	Nonce = short_term_nonce(),
 	Box = box(M, Nonce:8/binary, ES, ECs),
-	Msg = <<109,27,57,203,246,90,17,180
+	Msg = <<109,27,57,203,246,90,17,180, Nonce:64/integer, Box/binary>>
 
 The header of a message is `8+8+16 = 32` bytes. This makes the maximally sized message in the procotol `256 * 256 - 32 = 65504` bytes in size. Sending larger messages are possible if a higher-level implementation embeds chunking inside packets, but it is of no concern to the security structure of the protocol.
 
@@ -132,8 +132,8 @@ Like in CurveCP, there are four different nonce types involved:
 | ------------| ------------|
 | The servers long-term keypair `(S, Ss)`. The client knows `S` before making a connection | The string `<<"CurveCPK">>` follow by a 16 byte compressed nonce |
 | The clients long-term keypair `(C, Cs)`. Some servers can differentiate connections based on `C` | The string `<<"CurveCPV">>` followed by a 16 byte compressed nonce |
-| The servers short-term keypair `(ES, ESs)`. This keypair provides forward secrecy. | The string `<<"CurveCP-server-M">>` followed by a 8 byte compressed nonce. This nonce represents a 64-bit *little-endian* number (for easy comparison) |
-| The clients short-term keypair `(EC, ECs)`. Specific to the connection. | The string `<<"CurveCP-client-">>` followed by `<<"H">>`, `<<"I">>` and `<<"M">>` for Hello, Initiate and Message packets respectively. Then a 8 byte compressed nonce representing a 64 bit *little-endian* number (for easy comparison) |
+| The servers short-term keypair `(ES, ESs)`. This keypair provides forward secrecy. | The string `<<"CurveCP-server-M">>` followed by a 8 byte compressed nonce. This nonce represents a 64-bit *big-endian* number |
+| The clients short-term keypair `(EC, ECs)`. Specific to the connection. | The string `<<"CurveCP-client-">>` followed by `<<"H">>`, `<<"I">>` and `<<"M">>` for Hello, Initiate and Message packets respectively. Then a 8 byte compressed nonce representing a 64 bit *big-endian* number |
 
 ## Short term keys
 
@@ -144,7 +144,7 @@ For short-term client keys you generate the following nonce for a message type `
 	msg_type(msg) -> <<"M">>.
 	
 	Type = msg_type(T),
-	<<"CurveCP-client-", Type:1/binary, N:64/integer-little>>
+	<<"CurveCP-client-", Type:1/binary, N:64/integer>>
 	
 Server-keys are likewise, but replaces `<<"CurveCP-client-">>` with `<<"CurveCP-server-">>`. The `N` is a counter counting from 0, 1, 2, … and so on. The rule is that if you reach the number `2^64` you must immediately close the connection. Note that this number is so large that a rate of 1 billion packets a second takes nearly 600 years to go through, so it should be ample.
 
