@@ -123,9 +123,9 @@ connected(_M, _) ->
 connected(close, _From, #{ socket := Sock } = State) ->
     ok = gen_tcp:close(Sock),
     {stop, normal, ok, connected, maps:remove(socket, State)};
-connected(recv, From, #{ socket := Sock } = State) ->
-    handle_socket(Sock, next),
-    {noreply, connected, State#{ recv_queue := queue:in(From) }};
+connected(recv, From, #{ socket := Sock, recv_queue := Q } = State) ->
+    ok = handle_socket(Sock, next),
+    {noreply, connected, State#{ recv_queue := queue:in(From, Q) }};
 connected({send, M}, _From, State) ->
     {Reply, NState} = send_msg(M, State),
     {reply, Reply, connected, NState}.
