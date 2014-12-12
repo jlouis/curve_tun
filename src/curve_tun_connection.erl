@@ -39,7 +39,7 @@ close(#curve_tun_socket { pid = Pid }) ->
     gen_fsm:sync_send_event(Pid, close).
 
 listen(Port, Opts) ->
-    Options = [{packet, 2} | Opts],
+    Options = [binary, {packet, 2}, {active, false} | Opts],
     gen_tcp:listen(Port, Options).
 
 accept(LSock) ->
@@ -81,7 +81,7 @@ ready({accept, LSock}, From, # { vault := Vault } = State) ->
            end
     end;
 ready({connect, Address, Port, Options}, From, State) ->
-    TcpOpts = [{packet, 2} | Options],
+    TcpOpts = lists:keydelete(key, 1, [{packet, 2}, binary, {active, false} | Options]),
     ServerKey = proplists:get_value(key, Options),
     case gen_tcp:connect(Address, Port, TcpOpts) of
         {error, Reason} ->
