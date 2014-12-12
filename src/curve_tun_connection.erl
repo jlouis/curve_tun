@@ -270,8 +270,11 @@ recv_hello(Socket, Vault) ->
     receive
         {tcp, Socket, <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>} ->
             recv_hello_(EC, st_nonce(hello, client, N), Box, Vault);
-        {tcp, Socket, _Otherwise} ->
+        {tcp, Socket, Otherwise} ->
+            error_logger:info_report([received, Otherwise]),
             {error, ehello}
+   after 5000 ->
+       {error, timeout}
    end.
 
 recv_hello_(EC, Nonce, Box, Vault) ->
