@@ -185,7 +185,7 @@ handle_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>, % MSG
     handle_recv_queue(State#{ buf := Msg });
 handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
                 K:96/binary, N:64/integer, Box/binary>>,
-	accepting, #{ socket := Sock, peer_public_key := EC, vault := Vault, registry := Registry } = State) ->
+	accepting, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
         {ok, EC, ESs} ->
             Nonce = st_nonce(vouch, client, N),
@@ -194,7 +194,7 @@ handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
             VNonce = lt_nonce(client, NonceLT),
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
             %% Everything seems to be in order, go to connected state:
-            {hold, connected, State# { secret_key := ESs }};
+            {hold, connected, State# { secret_key := ESs, peer_public_key := EC }};
         {error, Reason} ->
             {error, Reason}
     end;
