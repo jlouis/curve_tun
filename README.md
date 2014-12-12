@@ -28,6 +28,7 @@ We are currently constructing the curve_tun application. This means a lot of thi
 * There is only a single vault, the dummy vault and it always use the same key material every time we want to encrypt something. This is chosen for simplicity, while we are focusing on other parts of the code base.
 * The current implementation opts to leak internal counters rather than encrypt them. This will be fixed in a future version.
 * safe_nonce() generation does not yet block-encrypt its counters.
+* There is only a single registry, and that registry is very simplistic.
 * The code has seen no testing at all, and spews dialyzer warnings left and right.
 
 The code itself is at a stage where it can be tested for connectivity and message transfer. But we have still to provide for error paths in the code, optimizations, robustness, verification and Erlang QuickCheck.

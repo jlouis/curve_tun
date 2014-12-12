@@ -32,6 +32,12 @@ The brilliance of the protocol is that cookies contain all information to constr
 
 The security implications are that once a key is recycled, it is gone. This means that while the server needs protection, it doesn't track keys long-term and thus is less of a problem.
 
+## The registry
+
+There is a process which handles the peer registry. This is akin to the file `$HOME/.ssh/known_hosts` in the SSH system. It maps from IP addresses into Public keys for those addresses. In a future variant of the system, it is possible to use different kinds of registries. For instance a registry mapping into DNS and thus binding the keys into the infrastructure.
+
+The registry must be protected against forgery on the endpoint. But apart from that, there are few security considerations. The registry only contains public keys of other clients, and possessing these should not damage anyone.
+
 ## Connection
 
 Connection processes implement an FSM which runs the connection system. There are the following two possible transition chains:
