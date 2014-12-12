@@ -74,10 +74,10 @@ ready({accept, LSock}, From, # { vault := Vault } = State) ->
             {ok, EC} = recv_hello(Socket, Vault),
             case send_cookie(Socket, EC, Vault) of
                 ok ->
-                  inet:setopts(Socket, [{active, once}]),
-                  {noreply, accepting, State#{ socket => Socket, from => From }};
+                    inet:setopts(Socket, [{active, once}]),
+                    {next_state, accepting, State#{ socket => Socket, from => From }};
                 {error, Reason} ->
-                   {stop, normal, {error, Reason}, ready, State}
+                    {stop, normal, {error, Reason}, State}
            end
     end;
 ready({connect, Address, Port, Options}, From, State) ->
@@ -85,20 +85,20 @@ ready({connect, Address, Port, Options}, From, State) ->
     ServerKey = proplists:get_value(key, Options),
     case gen_tcp:connect(Address, Port, TcpOpts) of
         {error, Reason} ->
-            {stop, normal, {error, Reason}, ready, State};
+            {stop, normal, {error, Reason}, State};
         {ok, Socket} ->
             #{ public := EC, secret := ECs } = enacl:box_keypair(),
             case send_hello(Socket, ServerKey, EC, ECs) of
                 ok ->
                     inet:setopts(Socket, [{active, once}]),
-                    {noreply, initiating, State#{
+                    {next_state, initiating, State#{
                     	from => From,
                     	socket => Socket,
                     	public_key => EC,
                     	secret_key => ECs,
                     	peer_lt_public_key => ServerKey }};
                 {error, Reason} ->
-                    {stop, normal, {error, Reason}, ready, State}
+                    {stop, normal, {error, Reason}, State}
             end
     end.
     
