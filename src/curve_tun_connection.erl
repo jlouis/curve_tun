@@ -260,7 +260,8 @@ send_cookie(Socket, EC, Vault) ->
     %% Send the secret short term key roundtrip to the client under protection of a minute key
     KBox = enacl:secretbox(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
     K = <<SafeNonce:16/binary, KBox/binary>>,
-    Box = Vault:box(<<ES:32/binary, K/binary>>, SafeNonce, EC),
+    BoxNonce = lt_nonce(server, SafeNonce),
+    Box = Vault:box(<<ES:32/binary, K/binary>>, BoxNonce, EC),
     Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
     ok = gen_tcp:send(Socket, Cookie),
     ok.
