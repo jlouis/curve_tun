@@ -10,6 +10,7 @@
    ,enacl
    ]}
  ,{env,[
-        {vault_providers, [curve_tun_vault_dummy]}]}
+        {vault_providers, [curve_tun_vault_dummy]},
+        {registry_providers, [curve_tun_simple_registry]}]}
  ,{modules, []}
  ]}.
