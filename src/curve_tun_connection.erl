@@ -146,7 +146,9 @@ handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
             {next_state, connected, reply(ok, NextState)};
         {Next, NewStateName, NewState} ->
             handle_socket(Sock, Next),
-            {next_state, NewStateName, NewState}
+            {next_state, NewStateName, NewState};
+        {error, _Reason} = Err ->
+            {stop, Statename, reply(Err, State)}
     end;
 handle_info({tcp_closed, S}, Statename, # { socket := S } = State) ->
     handle_tcp_closed(Statename, State);
