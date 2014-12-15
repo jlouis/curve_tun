@@ -11,12 +11,14 @@ l() ->
     Pid = spawn(fun() -> l_init(Self) end),
     receive
         {Pid, LSock} -> LSock
+    after 5000 ->
+        {error, spawn}
     end.
 
 l_init(Parent) ->
     register(listener, self()),
-    {ok, LSock} = curve_tun_connection:listen(6789),
-    Parent ! LSock,
+    {ok, LSock} = curve_tun_connection:listen(6789, []),
+    Parent ! {self(), LSock},
     l_loop().
     
 l_loop() ->
