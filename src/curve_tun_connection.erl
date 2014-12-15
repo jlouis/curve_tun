@@ -179,8 +179,11 @@ handle_recv_queue(#{ recv_queue := Q, buf := Buf } = State) ->
    end.
 
 handle_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>, % MSG
-	connected, #{ peer_public_key := P, secret_key := Ks, buf := undefined } = State) ->
-    Nonce = st_nonce(msg, client, N),
+	connected, #{ peer_public_key := P, secret_key := Ks, buf := undefined, side := Side } = State) ->
+    Nonce = case Side of
+                client -> st_nonce(msg, server, N);
+                server -> st_nonce(msg, client, N)
+            end,
     {ok, Msg} = enacl:box_open(Box, Nonce, P, Ks),
     handle_recv_queue(State#{ buf := Msg });
 handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
@@ -193,8 +196,8 @@ handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
             true = Registry:verify(Sock, C),
             VNonce = lt_nonce(client, NonceLT),
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
-            %% Everything seems to be in order, go to connected state:
-            {hold, connected, State# { secret_key := ESs, peer_public_key := EC }};
+            %% Everything seems to be in order, go to connected state
+            {hold, connected, State# { secret_key => ESs, peer_public_key => EC, c => 0, side => server }};
         {error, Reason} ->
             {error, Reason}
     end;
@@ -204,7 +207,7 @@ handle_packet(<<28,69,220,185,65,192,227,246, % COOKIE
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
     {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
-    {hold, connected, NState}.
+    {hold, connected, NState#{ side => client }}.
 
 handle_tcp_closed(_Statename, State) ->
     {next_state, closed, maps:remove(socket, State)}.
@@ -303,9 +306,9 @@ send_vouch(Kookie, #{
     ok = gen_tcp:send(Socket, I),
     {ok, State#{ c => 2 }}.
 
-send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount } = State) ->
-    Nonce = st_nonce(msg, client, NonceCount),
+send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount, side := Side } = State) ->
+    Nonce = st_nonce(msg, Side, NonceCount),
     Box = enacl:box(M, Nonce, P, Ks),
-    M = <<109,27,57,203,246,90,17,180, NonceCount:64/integer, Box/binary>>,
-    ok = gen_tcp:send(Socket, M),
+    Pkt = <<109,27,57,203,246,90,17,180, NonceCount:64/integer, Box/binary>>,
+    ok = gen_tcp:send(Socket, Pkt),
     {ok, State#{ c := NonceCount + 1}}.
