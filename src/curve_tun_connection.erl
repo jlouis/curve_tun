@@ -140,10 +140,6 @@ handle_event(Event, Statename, State) ->
 
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
     case handle_packet(Data, Statename, State) of
-        {Next, connected, #{ from := _} = NewState} ->
-            NextState = NewState#{ recv_queue => queue:new(), buf => undefined },
-            handle_socket(Sock, Next),
-            {next_state, connected, reply(ok, NextState)};
         {Next, NewStateName, NewState} ->
             handle_socket(Sock, Next),
             {next_state, NewStateName, NewState};
@@ -197,7 +193,9 @@ handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
             VNonce = lt_nonce(client, NonceLT),
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
             %% Everything seems to be in order, go to connected state
-            {hold, connected, State# { secret_key => ESs, peer_public_key => EC, c => 0, side => server }};
+            NState = State#{ recv_queue => queue:new(), buf => undefined, 
+                             secret_key => ESs, peer_public_key => EC, c => 0, side => server },  
+            {hold, connected, reply(ok, NState)};
         {error, Reason} ->
             {error, Reason}
     end;
@@ -207,7 +205,7 @@ handle_packet(<<28,69,220,185,65,192,227,246, % COOKIE
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
     {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
-    {hold, connected, NState#{ side => client }}.
+    {hold, connected, reply(ok, NState#{ recv_queue => queue:new(), buf => undefined, side => client })}.
 
 handle_tcp_closed(_Statename, State) ->
     {next_state, closed, maps:remove(socket, State)}.
