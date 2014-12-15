@@ -188,7 +188,7 @@ handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
 	accepting, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
         {ok, EC, ESs} ->
-            Nonce = st_nonce(vouch, client, N),
+            Nonce = st_nonce(initiate, client, N),
             {ok, <<C:32/binary, NonceLT:16/binary, Vouch/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
             true = Registry:verify(Sock, C),
             VNonce = lt_nonce(client, NonceLT),
