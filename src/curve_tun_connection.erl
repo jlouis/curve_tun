@@ -174,17 +174,15 @@ handle_recv_queue(#{ recv_queue := Q, buf := Buf } = State) ->
             {hold, connected, State}
    end.
 
-handle_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>, % MSG
-	connected, #{ peer_public_key := P, secret_key := Ks, buf := undefined, side := Side } = State) ->
+handle_msg(N, Box, #{ peer_public_key := P, secret_key := Ks, buf := undefined, side := Side } = State) ->
     Nonce = case Side of
                 client -> st_nonce(msg, server, N);
                 server -> st_nonce(msg, client, N)
             end,
     {ok, Msg} = enacl:box_open(Box, Nonce, P, Ks),
-    handle_recv_queue(State#{ buf := Msg });
-handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
-                K:96/binary, N:64/integer, Box/binary>>,
-	accepting, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
+    handle_recv_queue(State#{ buf := Msg }).
+
+handle_vouch(K, N, Box, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
         {ok, EC, ESs} ->
             Nonce = st_nonce(initiate, client, N),
@@ -198,14 +196,20 @@ handle_packet(<<108,9,175,178,138,169,250,253, % VOUCH
             {hold, connected, reply(ok, NState)};
         {error, Reason} ->
             {error, Reason}
-    end;
-handle_packet(<<28,69,220,185,65,192,227,246, % COOKIE
-                N:16/binary, Box/binary>>, initiating,
-	#{ secret_key := ECs, peer_lt_public_key := S } = State) ->
+    end.
+
+handle_cookie(N, Box, #{ secret_key := ECs, peer_lt_public_key := S } = State) ->
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
     {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
     {hold, connected, reply(ok, NState#{ recv_queue => queue:new(), buf => undefined, side => client })}.
+
+handle_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>, connected, State) ->
+    handle_msg(N, Box, State);
+handle_packet(<<108,9,175,178,138,169,250,253, K:96/binary, N:64/integer, Box/binary>>, accepting, State) ->
+    handle_vouch(K, N, Box, State);
+handle_packet(<<28,69,220,185,65,192,227,246,  N:16/binary, Box/binary>>, initiating, State) ->
+    handle_cookie(N, Box, State).
 
 handle_tcp_closed(_Statename, State) ->
     {next_state, closed, maps:remove(socket, State)}.
