@@ -297,8 +297,9 @@ send_vouch(Kookie, #{
     {Vouch, C, NonceLT} = vouch(EC, S, Vault),
     N = 1,
     Nonce = st_nonce(initiate, client, N),
+    96 = byte_size(Kookie),
     Box = enacl:box(<<C:32/binary, NonceLT/binary, Vouch/binary>>, Nonce, ES, ECs),
-    I = <<108,9,175,178,138,169,250,253, Kookie/binary, Nonce/binary, Box/binary>>,
+    I = <<108,9,175,178,138,169,250,253, Kookie/binary, N:64/integer, Box/binary>>,
     ok = gen_tcp:send(Socket, I),
     {ok, State#{ c => 2 }}.
 
