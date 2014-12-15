@@ -140,7 +140,7 @@ handle_event(Event, Statename, State) ->
 
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
     case handle_packet(Data, Statename, State) of
-        {Next, connected, NewState} ->
+        {Next, connected, #{ from := _} = NewState} ->
             NextState = NewState#{ recv_queue => queue:new(), buf => undefined },
             handle_socket(Sock, Next),
             {next_state, connected, reply(ok, NextState)};
