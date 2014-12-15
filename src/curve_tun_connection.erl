@@ -219,7 +219,7 @@ unpack_cookie(<<Nonce:16/binary, Cookie/binary>>) ->
 unpack_cookie_([], _, _) -> {error, ecookie};
 unpack_cookie_([K | Ks], CNonce, Cookie) ->
     case enacl:secretbox_open(Cookie, CNonce, K) of
-        {ok, Msg} -> {ok, Msg};
+        {ok, <<EC:32/binary, ESs:32/binary>>} -> {ok, EC, ESs};
         {error, verification_failed} ->
             unpack_cookie_(Ks, CNonce, Cookie)
     end.
