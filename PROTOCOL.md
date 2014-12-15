@@ -101,12 +101,12 @@ The 8 bytes are randomly picked and identifies the stream in the other direction
 
 *Note*: Once the `ES` key is in the hands of the client, the server has no need for the key anymore and it is thrown away.
 
-### Vouch packets
+### Vouch (Initiate) packets
 
 Vouch packets from the client to the server have the following structure:
 
 	K = cookie(),
-	Nonce = short_term_nonce(),
+	Nonce = short_term_nonce(initiate, client),
 	NonceLT = long_term_nonce(),
 	V = box(<<EC/binary>>, NonceLT:16/binary, S, Cs),
 	Box = box(<<C:32/binary, NonceLT:24/binary, V:48/binary>>, ES, ECs),
@@ -116,11 +116,13 @@ Vouch packets from the client to the server have the following structure:
 
 Once the connection has been established, the messaging structure is much simpler. Messages have the obvious structure:
 
-	Nonce = short_term_nonce(),
+	Nonce = short_term_nonce(msg, Side),
 	Box = box(M, Nonce:8/binary, ES, ECs),
 	Msg = <<109,27,57,203,246,90,17,180, Nonce:64/integer, Box/binary>>
 
 The header of a message is `8+8+16 = 32` bytes. This makes the maximally sized message in the procotol `256 * 256 - 32 = 65504` bytes in size. Sending larger messages are possible if a higher-level implementation embeds chunking inside packets, but it is of no concern to the security structure of the protocol.
+
+The value `Side` is either `server` or `client`. It affects how short-term nonce values are generated. By having the client and server generate different nonce values, we guarantee the servera and client can't use the same nonce value with a keypair, thus avoiding overlap problems.
 
 # Nonce handling
 
