@@ -10,7 +10,11 @@ The protocol also provides *active forward secrecy* against attackers. I.e., an 
 Build
 -----
 
-    $ rebar3 compile
+This project requires the `enacl` bindings which in turn requires an installed `libsodium` library. Do note that the sodium library is not a package by default in Debian/Ubuntu for instance, so you may have to build a package yourself through the use of e.g., `checkinstall`. From there on, it should be as easy as compiling with rebar:
+
+    $ rebar compile
+
+In principle, it should work with rebar3 as well, but in practice, rebar3 needs to learn how to compile C source code first for it to handle `enacl` correctly.
 
 Security
 -------------
