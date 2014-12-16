@@ -74,7 +74,7 @@ ready({accept, LSock}, From, # { vault := Vault } = State) ->
             {ok, EC} = recv_hello(Socket, Vault),
             case send_cookie(Socket, EC, Vault) of
                 ok ->
-                    inet:setopts(Socket, [{active, once}]),
+                    ok = inet:setopts(Socket, [{active, once}]),
                     {next_state, accepting, State#{ socket => Socket, from => From }};
                 {error, Reason} ->
                     {stop, normal, {error, Reason}, State}
@@ -90,7 +90,7 @@ ready({connect, Address, Port, Options}, From, State) ->
             #{ public := EC, secret := ECs } = enacl:box_keypair(),
             case send_hello(Socket, ServerKey, EC, ECs) of
                 ok ->
-                    inet:setopts(Socket, [{active, once}]),
+                    ok = inet:setopts(Socket, [{active, once}]),
                     {next_state, initiating, State#{
                     	from => From,
                     	socket => Socket,
@@ -141,7 +141,7 @@ handle_event(Event, Statename, State) ->
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
     case handle_packet(Data, Statename, State) of
         {Next, NewStateName, NewState} ->
-            handle_socket(Sock, Next),
+            ok = handle_socket(Sock, Next),
             {next_state, NewStateName, NewState};
         {error, _Reason} = Err ->
             {stop, Statename, reply(Err, State)}
@@ -225,7 +225,7 @@ unpack_cookie_([], _, _) -> {error, ecookie};
 unpack_cookie_([K | Ks], CNonce, Cookie) ->
     case enacl:secretbox_open(Cookie, CNonce, K) of
         {ok, <<EC:32/binary, ESs:32/binary>>} -> {ok, EC, ESs};
-        {error, verification_failed} ->
+        {error, failed_verification} ->
             unpack_cookie_(Ks, CNonce, Cookie)
     end.
 
@@ -252,7 +252,7 @@ send_hello(Socket, S, EC, ECs) ->
     Nonce = st_nonce(hello, client, N),
     Box = enacl:box(binary:copy(<<0>>, 64), Nonce, S, ECs),
     H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>,
-    ok = gen_tcp:send(Socket, H).
+    gen_tcp:send(Socket, H).
 
 send_cookie(Socket, EC, Vault) ->
     %% Once ES is in the hands of the client, the server doesn't need it anymore
@@ -268,8 +268,7 @@ send_cookie(Socket, EC, Vault) ->
     BoxNonce = lt_nonce(server, SafeNonce),
     Box = Vault:box(<<ES:32/binary, K/binary>>, BoxNonce, EC),
     Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
-    ok = gen_tcp:send(Socket, Cookie),
-    ok.
+    gen_tcp:send(Socket, Cookie).
 
 recv_hello(Socket, Vault) ->
     receive
