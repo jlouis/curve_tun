@@ -1,7 +1,7 @@
 -module(curve_tun_connection).
 -behaviour(gen_fsm).
 
--export([connect/3, accept/1, listen/2, send/2, close/1, recv/1]).
+-export([connect/3, accept/1, listen/2, send/2, close/1, recv/1, controlling_process/1]).
 
 %% Private callbacks
 -export([start_fsm/0, start_link/1]).
@@ -51,6 +51,9 @@ accept(LSock) ->
            {error, Reason}
    end.
 
+controlling_process(#curve_tun_socket { pid = Pid }) ->
+    gen_fsm:sync_send_all_state_event(Pid, {controlling_process, self()}).
+
 %% @private
 start_fsm() ->
     Controller = self(),
@@ -63,11 +66,11 @@ start_link(Controller) ->
     
 %% @private
 init([Controller]) ->
-    erlang:monitor(process, Controller),
+    Ref = erlang:monitor(process, Controller),
     State = #{
         vault => curve_tun_vault_dummy,
         registry => curve_tun_simple_registry,
-        controller => Controller
+        controller => {Controller, Ref}
     },
     {ok, ready, State}.
 
@@ -138,6 +141,11 @@ connected({send, M}, _From, State) ->
     {Reply, NState} = send_msg(M, State),
     {reply, Reply, connected, NState}.
 
+handle_sync_event({controlling_process, Controller}, {PrevController, _Tag}, Statename,
+        #{ controller := {PrevController, MRef} } = State) ->
+    erlang:demonitor(MRef, [flush]),
+    NewRef = erlang:monitor(process, Controller),
+    {reply, ok, Statename, State# { controller := {Controller, NewRef}}};
 handle_sync_event(Event, _From, Statename, State) ->
     error_logger:info_msg("Unknown sync_event ~p in state ~p", [Event, Statename]),
     {next_state, Statename, State}.
