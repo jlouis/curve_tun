@@ -4,7 +4,7 @@
 -export([connect/3, accept/1, listen/2, send/2, close/1, recv/1]).
 
 %% Private callbacks
--export([start_link/0]).
+-export([start_fsm/0, start_link/1]).
 
 %% FSM callbacks
 -export([init/1, code_change/4, terminate/3, handle_info/3, handle_event/3, handle_sync_event/4]).
@@ -21,7 +21,7 @@
 %% -record(state, {}). 
 
 connect(Address, Port, Options) ->
-    {ok, Pid} = start_link(),
+    {ok, Pid} = start_fsm(),
     case gen_fsm:sync_send_event(Pid, {connect, Address, Port, Options}) of
         ok ->
             {ok, #curve_tun_socket { pid = Pid }};
@@ -43,7 +43,7 @@ listen(Port, Opts) ->
     gen_tcp:listen(Port, Options).
 
 accept(LSock) ->
-    {ok, Pid} = start_link(),
+    {ok, Pid} = start_fsm(),
     case gen_fsm:sync_send_event(Pid, {accept, LSock}) of
        ok ->
            {ok, #curve_tun_socket { pid = Pid }};
@@ -52,14 +52,22 @@ accept(LSock) ->
    end.
 
 %% @private
-start_link() ->
-    gen_fsm:start_link(?MODULE, [], []).
+start_fsm() ->
+    Controller = self(),
+    {ok, Pid} = curve_tun_connection_sup:start_child([Controller]),
+    {ok, Pid}.
+
+%% @private
+start_link(Controller) ->
+    gen_fsm:start_link(?MODULE, [Controller], []).
     
 %% @private
-init([]) ->
+init([Controller]) ->
+    erlang:monitor(process, Controller),
     State = #{
         vault => curve_tun_vault_dummy,
-        registry => curve_tun_simple_registry
+        registry => curve_tun_simple_registry,
+        controller => Controller
     },
     {ok, ready, State}.
 
@@ -138,6 +146,9 @@ handle_event(Event, Statename, State) ->
     error_logger:info_msg("Unknown event ~p in state ~p", [Event, Statename]),
     {next_state, Statename, State}.
 
+handle_info({'DOWN', _Ref, process, Pid, _Info}, _Statename, #{ controller := Pid, socket := Socket } = State) ->
+    ok = gen_tcp:close(Socket),
+    {stop, tcp_closed, maps:remove(socket, State)};
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
     case handle_packet(Data, Statename, State) of
         {Next, NewStateName, NewState} ->
