@@ -30,10 +30,11 @@ start_link() ->
 
 %% Child :: {Id,StartFunc,Restart,Shutdown,Type,Modules}
 init([]) ->
+    ConnectionSup = connection_sup_child_spec(),
     CookieSpec = ?CHILDW(curve_tun_cookie, 2000),
     Registries = registry_providers(),
     Vaults = vault_providers(),
-    {ok, { {one_for_all, 3, 3600}, [CookieSpec] ++ Vaults ++ Registries} }.
+    {ok, { {one_for_all, 10, 3600}, [ConnectionSup, CookieSpec] ++ Vaults ++ Registries} }.
 
 %%====================================================================
 %% Internal functions
@@ -47,3 +48,14 @@ registry_providers() ->
     lists:map(fun child/1, Modules).
 
 child(M) -> ?CHILD(M).
+
+connection_sup_child_spec() ->
+    Name = connection_sup,
+    StartFunc = {curve_tun_connection_sup, start_link, []},
+    Restart = permanent,
+    Shutdown = 4000,
+    Modules = [curve_tun_connection_sup],
+    Type = supervisor,
+    {Name, StartFunc, Restart, Shutdown, Type, Modules}.
+
+    
