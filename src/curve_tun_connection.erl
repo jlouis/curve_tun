@@ -1,7 +1,7 @@
 -module(curve_tun_connection).
 -behaviour(gen_fsm).
 
--export([connect/3, accept/1, listen/2, send/2, close/1, recv/1, controlling_process/1]).
+-export([connect/3, accept/1, listen/2, send/2, close/1, recv/1, controlling_process/2]).
 
 %% Private callbacks
 -export([start_fsm/0, start_link/1]).
@@ -51,8 +51,8 @@ accept(LSock) ->
            {error, Reason}
    end.
 
-controlling_process(#curve_tun_socket { pid = Pid }) ->
-    gen_fsm:sync_send_all_state_event(Pid, {controlling_process, self()}).
+controlling_process(#curve_tun_socket { pid = Pid }, Controller) ->
+    gen_fsm:sync_send_all_state_event(Pid, {controlling_process, Controller}).
 
 %% @private
 start_fsm() ->
