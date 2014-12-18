@@ -146,6 +146,8 @@ handle_sync_event({controlling_process, Controller}, {PrevController, _Tag}, Sta
     erlang:demonitor(MRef, [flush]),
     NewRef = erlang:monitor(process, Controller),
     {reply, ok, Statename, State# { controller := {Controller, NewRef}}};
+handle_sync_event({controlling_process, _Controller}, _From, Statename, State) ->
+    {reply, {error, not_owner}, Statename, State};
 handle_sync_event(Event, _From, Statename, State) ->
     error_logger:info_msg("Unknown sync_event ~p in state ~p", [Event, Statename]),
     {next_state, Statename, State}.
