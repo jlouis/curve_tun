@@ -76,38 +76,35 @@ init([Controller]) ->
 
 
 %% @private
-ready({accept, LSock}, From, # { vault := Vault } = State) ->
+ready({accept, LSock}, From, State) ->
     case gen_tcp:accept(LSock) of
         {error, Reason} ->
             {stop, normal, {error, Reason}, ready, State};
         {ok, Socket} ->
+            InitState = State#{ socket => Socket },
             ok = inet:setopts(Socket, [{active, once}]),
-            {ok, EC} = recv_hello(Socket, Vault),
-            case send_cookie(Socket, EC, Vault) of
+            {ok, EC} = recv_hello(InitState),
+            case send_cookie(EC, InitState) of
                 ok ->
                     ok = inet:setopts(Socket, [{active, once}]),
-                    {next_state, accepting, State#{ socket => Socket, from => From }};
+                    {next_state, accepting, InitState#{ from => From }};
                 {error, Reason} ->
                     {stop, normal, {error, Reason}, State}
            end
     end;
 ready({connect, Address, Port, Options}, From, State) ->
     TcpOpts = lists:keydelete(key, 1, [{packet, 2}, binary, {active, false} | Options]),
-    ServerKey = proplists:get_value(key, Options),
+    S = proplists:get_value(key, Options),
     case gen_tcp:connect(Address, Port, TcpOpts) of
         {error, Reason} ->
             {stop, normal, {error, Reason}, State};
         {ok, Socket} ->
             #{ public := EC, secret := ECs } = enacl:box_keypair(),
-            case send_hello(Socket, ServerKey, EC, ECs) of
+            InitState = #{ peer_lt_public_key => S, public_key => EC, secret_key => ECs, socket => Socket },
+            case send_hello(InitState) of
                 ok ->
                     ok = inet:setopts(Socket, [{active, once}]),
-                    {next_state, initiating, State#{
-                    	from => From,
-                    	socket => Socket,
-                    	public_key => EC,
-                    	secret_key => ECs,
-                    	peer_lt_public_key => ServerKey }};
+                    {next_state, initiating, InitState#{ from => From }};
                 {error, Reason} ->
                     {stop, normal, {error, Reason}, State}
             end
@@ -160,7 +157,7 @@ handle_info({'DOWN', _Ref, process, Pid, _Info}, _Statename, #{ controller := Pi
     ok = gen_tcp:close(Socket),
     {stop, tcp_closed, maps:remove(socket, State)};
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
-    case handle_packet(Data, Statename, State) of
+    case handle_packet(d_packet(Data), Statename, State) of
         {Next, NewStateName, NewState} ->
             ok = handle_socket(Sock, Next),
             {next_state, NewStateName, NewState};
@@ -179,7 +176,25 @@ terminate(_Reason, _Statename, _State) ->
 code_change(_OldVsn, Statename, State, _Aux) ->
     {ok, Statename, State}.
 
-%% Internal handlers
+%% INTERNAL HANDLERS
+
+unpack_cookie(<<Nonce:16/binary, Cookie/binary>>) ->
+    CNonce = lt_nonce(minute_k, Nonce),
+    Keys = curve_tun_cookie:recent_keys(),
+    unpack_cookie_(Keys, CNonce, Cookie).
+    
+unpack_cookie_([], _, _) -> {error, ecookie};
+unpack_cookie_([K | Ks], CNonce, Cookie) ->
+    case enacl:secretbox_open(Cookie, CNonce, K) of
+        {ok, <<EC:32/binary, ESs:32/binary>>} -> {ok, EC, ESs};
+        {error, failed_verification} ->
+            unpack_cookie_(Ks, CNonce, Cookie)
+    end.
+
+reply(M, #{ from := From } = State) ->
+    gen_fsm:reply(From, M),
+    maps:remove(from, State).
+    
 
 handle_socket(Sock, next) -> inet:setopts(Sock, [{active, once}]);
 handle_socket(_Sock, hold) -> ok.
@@ -235,28 +250,10 @@ handle_packet(<<28,69,220,185,65,192,227,246,  N:16/binary, Box/binary>>, initia
 handle_tcp_closed(_Statename, State) ->
     {next_state, closed, maps:remove(socket, State)}.
 
-%% Internal functions
+%% NONCE generation
+%%
+%% There are two types of nonces: short-term (st) and long-term (lt)
 
-unpack_cookie(<<Nonce:16/binary, Cookie/binary>>) ->
-    CNonce = lt_nonce(minute_k, Nonce),
-    Keys = curve_tun_cookie:recent_keys(),
-    unpack_cookie_(Keys, CNonce, Cookie).
-    
-unpack_cookie_([], _, _) -> {error, ecookie};
-unpack_cookie_([K | Ks], CNonce, Cookie) ->
-    case enacl:secretbox_open(Cookie, CNonce, K) of
-        {ok, <<EC:32/binary, ESs:32/binary>>} -> {ok, EC, ESs};
-        {error, failed_verification} ->
-            unpack_cookie_(Ks, CNonce, Cookie)
-    end.
-
-reply(M, #{ from := From } = State) ->
-    gen_fsm:reply(From, M),
-    maps:remove(from, State).
-    
-%% Nonce generation
-
-%% Short term nonces
 st_nonce(hello, client, N) -> <<"CurveCP-client-H", N:64/integer>>;
 st_nonce(initiate, client, N) -> <<"CurveCP-client-I", N:64/integer>>;
 st_nonce(msg, client, N) -> <<"CurveCP-client-M", N:64/integer>>;
@@ -268,69 +265,102 @@ lt_nonce(minute_k, N) -> <<"minute-k", N/binary>>;
 lt_nonce(client, N) -> <<"CurveCPV", N/binary>>;
 lt_nonce(server, N) -> <<"CurveCPK", N/binary>>.
 
-send_hello(Socket, S, EC, ECs) ->
-    N = 0,
-    Nonce = st_nonce(hello, client, N),
-    Box = enacl:box(binary:copy(<<0>>, 64), Nonce, S, ECs),
-    H = <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>,
-    gen_tcp:send(Socket, H).
-
-send_cookie(Socket, EC, Vault) ->
-    %% Once ES is in the hands of the client, the server doesn't need it anymore
-    #{ public := ES, secret := ESs } = enacl:box_keypair(),
-
-    Ts = curve_tun_cookie:current_key(),
-    SafeNonce = Vault:safe_nonce(),
-    CookieNonce = lt_nonce(minute_k, SafeNonce),
-
-    %% Send the secret short term key roundtrip to the client under protection of a minute key
-    KBox = enacl:secretbox(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
-    K = <<SafeNonce:16/binary, KBox/binary>>,
-    BoxNonce = lt_nonce(server, SafeNonce),
-    Box = Vault:box(<<ES:32/binary, K/binary>>, BoxNonce, EC),
-    Cookie = <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>,
-    gen_tcp:send(Socket, Cookie).
-
-recv_hello(Socket, Vault) ->
+%% RECEIVING expected messages
+recv_hello(#{ socket := Socket, vault := Vault}) ->
     receive
-        {tcp, Socket, <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>} ->
-            recv_hello_(EC, st_nonce(hello, client, N), Box, Vault);
-        {tcp, Socket, Otherwise} ->
-            error_logger:info_report([received, Otherwise]),
-            {error, ehello}
+        {tcp, Socket, Data} ->
+            case d_packet(Data) of
+                {hello, EC, N, Box} ->
+                    STNonce = st_nonce(hello, client, N),
+                    {ok, <<0:512/integer>>} = Vault:box_open(Box, STNonce, EC),
+                    {ok, EC};
+                Otherwise ->
+                    error_logger:info_report([received, Otherwise]),
+                    {error, ehello}
+            end
    after 5000 ->
        {error, timeout}
    end.
 
-recv_hello_(EC, Nonce, Box, Vault) ->
-    {ok, <<0:512/integer>>} = Vault:box_open(Box, Nonce, EC),
-    {ok, EC}.
+%% SENDING messages over the wire
+send_hello(#{ peer_lt_public_key := S, public_key := EC, secret_key := ECs, socket := Socket }) ->
+    N = 0,
+    gen_tcp:send(Socket, e_hello(S, EC, ECs, N)).
 
-vouch(Msg, S, Vault) ->
-    Nonce = Vault:safe_nonce(),
-    VNonce = lt_nonce(client, Nonce),
-    Box = Vault:box(Msg, VNonce, S),
-    {Box, Vault:public_key(), Nonce}.
+send_cookie(EC, #{ socket := Socket, vault := Vault}) ->
+    %% Once ES is in the hands of the client, the server doesn't need it anymore
+    #{ public := ES, secret := ESs } = enacl:box_keypair(),
+    gen_tcp:send(Socket, e_cookie(EC, ES, ESs, Vault)).
 
-send_vouch(Kookie, #{
-	socket := Socket,
+send_vouch(Kookie, #{ socket := Socket,
 	public_key := EC,
 	secret_key := ECs,
 	peer_lt_public_key := S,
 	peer_public_key := ES,
 	vault := Vault } = State) ->
-    {Vouch, C, NonceLT} = vouch(EC, S, Vault),
-    N = 1,
-    Nonce = st_nonce(initiate, client, N),
-    96 = byte_size(Kookie),
-    Box = enacl:box(<<C:32/binary, NonceLT/binary, Vouch/binary>>, Nonce, ES, ECs),
-    I = <<108,9,175,178,138,169,250,253, Kookie/binary, N:64/integer, Box/binary>>,
-    ok = gen_tcp:send(Socket, I),
-    {ok, State#{ c => 2 }}.
-
+    case gen_tcp:send(Socket, e_vouch(Kookie, EC, S, Vault, 1, ES, ECs)) of
+        ok -> {ok, State#{ c => 2 }};
+        {error, Reason} -> {error, Reason}
+    end.
+   
 send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount, side := Side } = State) ->
+    case gen_tcp:send(Socket, e_msg(M, Side, NonceCount, P, Ks)) of
+         ok -> {ok, State#{ c := NonceCount + 1}};
+         {error, Reason} -> {error, Reason}
+    end.
+
+%% COMMAND GENERATION
+%% 
+%% The c_* functions produce messages for the wire. They are kept here
+%% for easy perusal. Note that while the arguments are terse, they do have
+%% meaning since they reflect the meaning of the protocol specification. For
+%% instance, the argument ECs means (E)phermeral (C)lient (s)ecret key.
+e_hello(S, EC, ECs, N) ->
+    Nonce = st_nonce(hello, client, N),
+    Box = enacl:box(binary:copy(<<0>>, 64), Nonce, S, ECs),
+    <<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>.
+
+e_cookie(EC, ES, ESs, Vault) ->
+    Ts = curve_tun_cookie:current_key(),
+    SafeNonce = Vault:safe_nonce(),
+    CookieNonce = lt_nonce(minute_k, SafeNonce),
+
+    KBox = enacl:secretbox(<<EC:32/binary, ESs:32/binary>>, CookieNonce, Ts),
+    K = <<SafeNonce:16/binary, KBox/binary>>,
+    BoxNonce = lt_nonce(server, SafeNonce),
+    Box = Vault:box(<<ES:32/binary, K/binary>>, BoxNonce, EC),
+    <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>.
+
+e_vouch(Kookie, VMsg, S, Vault, N, ES, ECs) when byte_size(Kookie) == 96 ->
+    NonceBase = Vault:safe_nonce(),
+
+    %% Produce the box for the vouch
+    VouchNonce = lt_nonce(client, NonceBase),
+    VouchBox = Vault:box(VMsg, VouchNonce, S),
+    C = Vault:public_key(),
+    
+    STNonce = st_nonce(initiate, client, N),
+    Box = enacl:box(<<C:32/binary, NonceBase/binary, VouchBox/binary>>, STNonce, ES, ECs),
+    <<108,9,175,178,138,169,250,253, Kookie/binary, N:64/integer, Box/binary>>.
+    
+e_msg(M, Side, NonceCount, PK, SK) ->
     Nonce = st_nonce(msg, Side, NonceCount),
-    Box = enacl:box(M, Nonce, P, Ks),
-    Pkt = <<109,27,57,203,246,90,17,180, NonceCount:64/integer, Box/binary>>,
-    ok = gen_tcp:send(Socket, Pkt),
-    {ok, State#{ c := NonceCount + 1}}.
+    Box = enacl:box(M, Nonce, PK, SK),
+    <<109,27,57,203,246,90,17,180, NonceCount:64/integer, Box/binary>>.
+
+%% PACKET DECODING
+%%
+%% To make it easy to understand what is going on, keep the packet decoder
+%% close the to encoding of messages. The above layers then handle the
+%% semantics of receiving and sending commands/packets over the wire
+d_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>) ->
+    {msg, N, Box};
+d_packet(<<108,9,175,178,138,169,250,253, K:96/binary, N:64/integer, Box/binary>>) ->
+    {vouch, K, N, Box};
+d_packet(<<28,69,220,185,65,192,227,246,  N:16/binary, Box/binary>>) ->
+    {cookie, N, Box};
+d_packet(<<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>) ->
+    {hello, EC, N, Box};
+d_packet(_) ->
+    unknown.
+    
