@@ -16,9 +16,9 @@
 	ready/2, ready/3
 ]).
 
+-record(curve_tun_lsock, { lsock :: port () }).
+
 -record(curve_tun_socket, { pid :: pid() }).
-%% The state record is currently unused...
-%% -record(state, {}). 
 
 connect(Address, Port, Options) ->
     {ok, Pid} = start_fsm(),
@@ -40,9 +40,12 @@ close(#curve_tun_socket { pid = Pid }) ->
 
 listen(Port, Opts) ->
     Options = [binary, {packet, 2}, {active, false} | Opts],
-    gen_tcp:listen(Port, Options).
+    case gen_tcp:listen(Port, Options) of
+        {ok, LSock} -> #curve_tun_lsock { lsock = LSock };
+        {error, Reason} -> {error, Reason}
+    end.
 
-accept(LSock) ->
+accept(#curve_tun_lsock { lsock = LSock}) ->
     {ok, Pid} = start_fsm(),
     case gen_fsm:sync_send_event(Pid, {accept, LSock}) of
        ok ->
