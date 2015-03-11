@@ -12,9 +12,9 @@ Build
 
 This project requires the `enacl` bindings which in turn requires an installed `libsodium` library. Do note that the sodium library is not a package by default in Debian/Ubuntu for instance, so you may have to build a package yourself through the use of e.g., `checkinstall`. From there on, it should be as easy as compiling with rebar:
 
-    $ rebar compile
+    $ rebar3 compile
 
-In principle, it should work with rebar3 as well, but in practice, rebar3 needs to learn how to compile C source code first for it to handle `enacl` correctly.
+The project is using rebar3, because we need to move forward and rebar3 is a much better tool than rebar ever was.
 
 Security
 -------------

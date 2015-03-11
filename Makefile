@@ -4,3 +4,9 @@ REBAR=rebar3
 
 compile:
 	$(REBAR) compile
+	
+ct:
+	$(REBAR) ct
+
+test:
+	$(REBAR) ct
