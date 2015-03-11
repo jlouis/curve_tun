@@ -30,8 +30,7 @@ lookup(IP) ->
 verify(Socket, PubKey) ->
     {ok, {Address, _Port}} = inet:peername(Socket),
     case lookup(Address) of
-        {ok, PubKey} -> true;
-        {ok, _WrongKey} -> false;
+        {ok, Key} -> PubKey =:= Key;
         {error, not_found} -> false
     end.
         
@@ -49,8 +48,7 @@ handle_cast(_M, State) ->
 handle_call({register, IP, PubKey}, _From, #state { dict = Dict } = State) ->
     {reply, ok, State#state { dict = dict:store(IP, PubKey, Dict) }};
 handle_call({lookup, IP}, _From, #state { dict = Dict } = State) ->
-    Reply = lookup(IP, Dict),
-    {reply, Reply, State};
+    {reply, lookup(IP, Dict), State};
 handle_call(_M, _From, State) ->
     {reply, {error, bad_call}, State}.
     
