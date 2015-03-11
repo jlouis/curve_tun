@@ -14,7 +14,7 @@ start_child(Args) ->
 
 init(_O) ->
     RestartStrategy = simple_one_for_one,
-    MaxR = 0,
+    MaxR = 50,
     MaxT = 3600,
     
     Name = undefined,
