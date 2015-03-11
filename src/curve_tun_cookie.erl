@@ -25,9 +25,10 @@ recent_keys() ->
 
 %% Callbacks
 init([]) ->
+    OldKey = minute_key(),
     Key = minute_key(),
     erlang:send_after(?ROTATE_PERIOD, self(), recompute_key),
-    {ok, #state{ keys = [Key] }}.
+    {ok, #state{ keys = [Key, OldKey] }}.
 
 handle_call(current_key, _From, #state { keys = [K | _] } = State) ->
     {reply, K, State};
@@ -40,7 +41,7 @@ handle_cast(Msg, State) ->
     error_logger:info_report([{wrong_handle_cast, Msg}]),
     {noreply, State}.
     
-handle_info(recompute_key, #state { keys = [Existing | _ ] } = State) ->
+handle_info(recompute_key, #state { keys = [Existing, _Old] } = State) ->
     erlang:send_after(?ROTATE_PERIOD, self(), recompute_key),
     Key = minute_key(),
     {noreply, State#state{ keys = [Key, Existing] }};
