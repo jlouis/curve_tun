@@ -57,4 +57,4 @@ code_change(_OldVsn, State, _Aux) ->
 
 %% Internal functions
 minute_key() ->
-    crypto:strong_rand_bytes(enacl:secretbox_key_size()).
+    enacl:randombytes(enacl:secretbox_key_size()).
