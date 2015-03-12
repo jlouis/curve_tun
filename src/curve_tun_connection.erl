@@ -133,7 +133,7 @@ connected(_M, _) ->
 
 connected(close, _From, #{ socket := Sock } = State) ->
     ok = gen_tcp:close(Sock),
-    {stop, normal, ok, connected, maps:remove(socket, State)};
+    {stop, normal, ok, maps:remove(socket, State)};
 connected(recv, From, #{ socket := Sock, recv_queue := Q } = State) ->
     ok = handle_socket(Sock, next),
     {next_state, connected, State#{ recv_queue := queue:in(From, Q) }};
@@ -145,7 +145,7 @@ handle_sync_event({controlling_process, Controller}, {PrevController, _Tag}, Sta
         #{ controller := {PrevController, MRef} } = State) ->
     erlang:demonitor(MRef, [flush]),
     NewRef = erlang:monitor(process, Controller),
-    {reply, ok, Statename, State# { controller := {Controller, NewRef}}};
+    {reply, ok, Statename, State#{ controller := {Controller, NewRef}}};
 handle_sync_event({controlling_process, _Controller}, _From, Statename, State) ->
     {reply, {error, not_owner}, Statename, State};
 handle_sync_event(Event, _From, Statename, State) ->
