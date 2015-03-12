@@ -243,12 +243,9 @@ handle_cookie(N, Box, #{ secret_key := ECs, peer_lt_public_key := S } = State) -
     {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
     {hold, connected, reply(ok, NState#{ recv_queue => queue:new(), buf => undefined, side => client })}.
 
-handle_packet(<<109,27,57,203,246,90,17,180, N:64/integer, Box/binary>>, connected, State) ->
-    handle_msg(N, Box, State);
-handle_packet(<<108,9,175,178,138,169,250,253, K:96/binary, N:64/integer, Box/binary>>, accepting, State) ->
-    handle_vouch(K, N, Box, State);
-handle_packet(<<28,69,220,185,65,192,227,246,  N:16/binary, Box/binary>>, initiating, State) ->
-    handle_cookie(N, Box, State).
+handle_packet({msg, N, Box}, connected, State) -> handle_msg(N, Box, State);
+handle_packet({vouch, K, N, Box}, accepting, State) -> handle_vouch(K, N, Box, State);
+handle_packet({cookie, N, Box}, initiating, State) -> handle_cookie(N, Box, State).
 
 handle_tcp_closed(_Statename, State) ->
     {next_state, closed, maps:remove(socket, State)}.
