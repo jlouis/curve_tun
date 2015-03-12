@@ -103,7 +103,7 @@ ready({connect, Address, Port, Options}, From, State) ->
             {stop, normal, {error, Reason}, State};
         {ok, Socket} ->
             #{ public := EC, secret := ECs } = enacl:box_keypair(),
-            InitState = #{ peer_lt_public_key => S, public_key => EC, secret_key => ECs, socket => Socket },
+            InitState = State#{ peer_lt_public_key => S, public_key => EC, secret_key => ECs, socket => Socket },
             case send_hello(InitState) of
                 ok ->
                     ok = inet:setopts(Socket, [{active, once}]),
