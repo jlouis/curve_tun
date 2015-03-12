@@ -41,7 +41,7 @@ close(#curve_tun_socket { pid = Pid }) ->
 listen(Port, Opts) ->
     Options = [binary, {packet, 2}, {active, false} | Opts],
     case gen_tcp:listen(Port, Options) of
-        {ok, LSock} -> #curve_tun_lsock { lsock = LSock };
+        {ok, LSock} -> {ok, #curve_tun_lsock { lsock = LSock }};
         {error, Reason} -> {error, Reason}
     end.
 
