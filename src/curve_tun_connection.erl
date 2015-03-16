@@ -221,10 +221,10 @@ handle_msg(N, Box, #{ peer_public_key := P, secret_key := Ks, buf := undefined, 
     {ok, Msg} = enacl:box_open(Box, Nonce, P, Ks),
     handle_recv_queue(State#{ buf := Msg }).
 
-handle_vouch(K, N, Box, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
+handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
         {ok, EC, ESs} ->
-            Nonce = st_nonce(initiate, client, N),
+            Nonce = st_nonce(initiate, client, 1),
             {ok, <<C:32/binary, NonceLT:16/binary, Vouch/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
             true = Registry:verify(Sock, C),
             VNonce = lt_nonce(client, NonceLT),
@@ -270,8 +270,8 @@ recv_hello(#{ socket := Socket, vault := Vault}) ->
     receive
         {tcp, Socket, Data} ->
             case d_packet(Data) of
-                {hello, EC, N, Box} ->
-                    STNonce = st_nonce(hello, client, N),
+                {hello, EC, 0, Box} ->
+                    STNonce = st_nonce(hello, client, 0),
                     {ok, <<0:512/integer>>} = Vault:box_open(Box, STNonce, EC),
                     {ok, EC};
                 Otherwise ->
