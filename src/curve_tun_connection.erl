@@ -225,13 +225,13 @@ handle_msg(N, Box, #{
 	secret_key := Ks,
 	buf := undefined,
 	side := Side,
-	rc := K } = State) when N > K ->
+	rc := N } = State) ->
     Nonce = case Side of
                 client -> st_nonce(msg, server, N);
                 server -> st_nonce(msg, client, N)
             end,
     {ok, Msg} = enacl:box_open(Box, Nonce, P, Ks),
-    handle_recv_queue(State#{ buf := Msg, rc := N }).
+    handle_recv_queue(State#{ buf := Msg, rc := N+1 }).
 
 handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
     case unpack_cookie(K) of
@@ -243,7 +243,7 @@ handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry 
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
             %% Everything seems to be in order, go to connected state
             NState = State#{ recv_queue => queue:new(), buf => undefined, 
-                             secret_key => ESs, peer_public_key => EC, c => 0, rc => -1, side => server },  
+                             secret_key => ESs, peer_public_key => EC, c => 0, rc => 0, side => server },  
             {hold, connected, reply(ok, NState)};
         {error, Reason} ->
             {error, Reason}
@@ -253,7 +253,7 @@ handle_cookie(N, Box, #{ secret_key := ECs, peer_lt_public_key := S } = State) -
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
     {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
-    {hold, connected, reply(ok, NState#{ recv_queue => queue:new(), buf => undefined, c => 0, side => client, rc => -1 })}.
+    {hold, connected, reply(ok, NState#{ recv_queue => queue:new(), buf => undefined, c => 0, side => client, rc => 0 })}.
 
 handle_packet({msg, N, Box}, connected, State) -> handle_msg(N, Box, State);
 handle_packet({vouch, K, N, Box}, accepting, State) -> handle_vouch(K, N, Box, State);
