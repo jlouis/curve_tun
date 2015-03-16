@@ -20,6 +20,12 @@
 
 -record(curve_tun_socket, { pid :: pid() }).
 
+%% Maximal number of messages that can be sent on the line before we crash.
+%% I don't expect code to ever hit this limit. As an example, you exhaust this in
+%% a year if you manage to send 584 billion messages per second on a single
+%% connection.
+-define(COUNT_LIMIT, 18446744073709551616 - 1).
+
 connect(Address, Port, Options) ->
     {ok, Pid} = start_fsm(),
     case gen_fsm:sync_send_event(Pid, {connect, Address, Port, Options}) of
@@ -213,6 +219,7 @@ handle_recv_queue(#{ recv_queue := Q, buf := Buf } = State) ->
             {hold, connected, State}
    end.
 
+handle_msg(?COUNT_LIMIT, _Box, _State) -> exit(count_limit);
 handle_msg(N, Box, #{
 	peer_public_key := P,
 	secret_key := Ks,
