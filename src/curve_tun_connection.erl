@@ -148,9 +148,11 @@ connected(close, _From, #{ socket := Sock } = State) ->
 connected(recv, From, #{ socket := Sock, recv_queue := Q } = State) ->
     ok = inet:setopts(Sock, [{active, once}]),
     {next_state, connected, State#{ recv_queue := queue:in(From, Q) }};
-connected({send, M}, _From, State) ->
-    {Reply, NState} = send_msg(M, State),
-    {reply, Reply, connected, NState}.
+connected({send, M}, _From, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount, side := Side } = State) ->
+    case gen_tcp:send(Socket, e_msg(M, Side, NonceCount, P, Ks)) of
+         ok -> {reply, ok, connected, State#{ c := NonceCount + 1}};
+         {error, _Reason} = Err -> {reply, Err, connected, State}
+    end.
 
 handle_sync_event({controlling_process, Controller}, {PrevController, _Tag}, Statename,
         #{ controller := {PrevController, MRef} } = State) ->
@@ -249,17 +251,21 @@ handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry 
             {stop, Err, State}
     end.
 
-handle_cookie(N, Box, #{ secret_key := ECs, peer_lt_public_key := S } = State) ->
+handle_cookie(N, Box, #{ public_key := EC, secret_key := ECs, peer_lt_public_key := S, socket := Socket, vault := Vault } = State) ->
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
-    {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
-    {next_state, connected,
-      reply(ok, NState#{
-      	recv_queue => queue:new(),
-      	buf => undefined,
-      	c => 0,
-      	side => client,
-      	rc => 0 })}.
+    case gen_tcp:send(Socket, e_vouch(K, EC, S, Vault, 1, ES, ECs)) of
+        ok ->
+            {next_state, connected, reply(ok, State#{
+			peer_public_key => ES,
+			recv_queue => queue:new(),
+			buf => undefined,
+			c => 0,
+			side => client,
+			rc => 0 })};
+        {error, _Reason} = Err ->
+            {stop, normal, reply(Err, State)}
+    end.
 
 handle_tcp(Data, StateName, State) ->
     case {d_packet(Data), StateName} of
@@ -303,24 +309,7 @@ recv_hello(#{ socket := Socket, vault := Vault}) ->
        {error, timeout}
    end.
 
-%% SENDING messages over the wire
-send_vouch(Kookie, #{ socket := Socket,
-	public_key := EC,
-	secret_key := ECs,
-	peer_lt_public_key := S,
-	peer_public_key := ES,
-	vault := Vault } = State) ->
-    case gen_tcp:send(Socket, e_vouch(Kookie, EC, S, Vault, 1, ES, ECs)) of
-        ok -> {ok, State#{ c => 2 }};
-        {error, Reason} -> {error, Reason}
-    end.
    
-send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := NonceCount, side := Side } = State) ->
-    case gen_tcp:send(Socket, e_msg(M, Side, NonceCount, P, Ks)) of
-         ok -> {ok, State#{ c := NonceCount + 1}};
-         {error, Reason} -> {error, Reason}
-    end.
-
 %% COMMAND GENERATION
 %% 
 %% The e_* functions produce messages for the wire. They are kept here
