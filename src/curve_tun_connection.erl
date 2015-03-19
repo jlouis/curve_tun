@@ -90,13 +90,13 @@ ready({accept, LSock}, From, #{ vault := Vault} = State) ->
             {stop, normal, {error, Reason}, ready, State};
         {ok, Socket} ->
             InitState = State#{ socket => Socket },
-            ok = activate_socket(Socket, next),
+            ok = inet:setopts(Socket, [{active, once}]),
             {ok, EC} = recv_hello(InitState),
             %% Once ES is in the hands of the client, the server doesn't need it anymore
             #{ public := ES, secret := ESs } = enacl:box_keypair(),
             case  gen_tcp:send(Socket, e_cookie(EC, ES, ESs, Vault)) of
                 ok ->
-                    ok = activate_socket(Socket, next),
+                    ok = inet:setopts(Socket, [{active, once}]),
                     {next_state, accepting, InitState#{ from => From }};
                 {error, Reason} ->
                     {stop, normal, {error, Reason}, State}
@@ -112,7 +112,7 @@ ready({connect, Address, Port, Options}, From, State) ->
             #{ public := EC, secret := ECs } = enacl:box_keypair(),
             case gen_tcp:send(Socket, e_hello(S, EC, ECs, 0)) of
                 ok ->
-                    ok = activate_socket(Socket, next),
+                    ok = inet:setopts(Socket, [{active, once}]),
                     {next_state, initiating, State#{
                     	from => From,
                     	peer_lt_public_key => S,
@@ -146,7 +146,7 @@ connected(close, _From, #{ socket := Sock } = State) ->
     ok = gen_tcp:close(Sock),
     {stop, normal, ok, maps:remove(socket, State)};
 connected(recv, From, #{ socket := Sock, recv_queue := Q } = State) ->
-    ok = activate_socket(Sock, next),
+    ok = inet:setopts(Sock, [{active, once}]),
     {next_state, connected, State#{ recv_queue := queue:in(From, Q) }};
 connected({send, M}, _From, State) ->
     {Reply, NState} = send_msg(M, State),
@@ -171,14 +171,8 @@ handle_info({'DOWN', _Ref, process, Pid, _Info}, _Statename, #{ controller := Pi
     ok = gen_tcp:close(Socket),
     {stop, tcp_closed, maps:remove(socket, State)};
 handle_info({tcp, Sock, Data}, Statename, #{ socket := Sock } = State) ->
-    case handle_packet(Data, Statename, State) of
-        {Next, NewStateName, NewState} ->
-            ok = activate_socket(Sock, Next),
-            {next_state, NewStateName, NewState};
-        {error, _Reason} = Err ->
-            {stop, Statename, reply(Err, State)}
-    end;
-handle_info({tcp_closed, S}, Statename, # { socket := S } = State) ->
+    handle_tcp(Data, Statename, State);
+handle_info({tcp_closed, Sock}, Statename, #{ socket := Sock } = State) ->
     handle_tcp_closed(Statename, State);
 handle_info(Info, Statename, State) ->
     error_logger:info_msg("Unknown info msg ~p in state ~p", [Info, Statename]),
@@ -209,22 +203,20 @@ reply(M, #{ from := From } = State) ->
     gen_fsm:reply(From, M),
     maps:remove(from, State).
     
-activate_socket(Sock, next) -> inet:setopts(Sock, [{active, once}]);
-activate_socket(_Sock, hold) -> ok.
-
 %% @doc process_recv_queue/1 sends messages back to waiting receivers
 %% Analyze the current waiting receivers and the buffer state. If there is a receiver for the buffered
 %% message, then send the message back the receiver.
 %% @end
-process_recv_queue(#{ recv_queue := Q, buf := Buf } = State) ->
+process_recv_queue(#{ recv_queue := Q, buf := Buf, socket := Sock } = State) ->
     case {queue:out(Q), Buf} of
         {{{value, _Receiver}, _Q2}, undefined} ->
-            {next, connected, State};
+            ok = inet:setopts(Sock, [{active, once}]),
+            {next_state, connected, State};
         {{{value, Receiver}, Q2}, Msg} ->
             gen_fsm:reply(Receiver, Msg),
             process_recv_queue(State#{ recv_queue := Q2, buf := undefined });
         {{empty, _Q2}, _} ->
-            {hold, connected, State}
+            {next_state, connected, State}
    end.
 
 handle_msg(?COUNT_LIMIT, _Box, _State) -> exit(count_limit);
@@ -251,24 +243,30 @@ handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry 
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
             %% Everything seems to be in order, go to connected state
             NState = State#{ recv_queue => queue:new(), buf => undefined, 
-                             secret_key => ESs, peer_public_key => EC, c => 0, rc => 0, side => server },  
-            {hold, connected, reply(ok, NState)};
-        {error, Reason} ->
-            {error, Reason}
+                             secret_key => ESs, peer_public_key => EC, c => 0, rc => 0, side => server },
+            {next_state, connected, reply(ok, NState)};  
+        {error, _Reason} = Err ->
+            {stop, Err, State}
     end.
 
 handle_cookie(N, Box, #{ secret_key := ECs, peer_lt_public_key := S } = State) ->
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
     {ok, NState} = send_vouch(K, State#{ peer_public_key => ES }),
-    {hold, connected, reply(ok, NState#{ recv_queue => queue:new(), buf => undefined, c => 0, side => client, rc => 0 })}.
+    {next_state, connected,
+      reply(ok, NState#{
+      	recv_queue => queue:new(),
+      	buf => undefined,
+      	c => 0,
+      	side => client,
+      	rc => 0 })}.
 
-handle_packet(Data, StateName, State) ->
-    dispatch_packet(d_packet(Data), StateName, State).
-
-dispatch_packet({msg, N, Box}, connected, State) -> handle_msg(N, Box, State);
-dispatch_packet({vouch, K, N, Box}, accepting, State) -> handle_vouch(K, N, Box, State);
-dispatch_packet({cookie, N, Box}, initiating, State) -> handle_cookie(N, Box, State).
+handle_tcp(Data, StateName, State) ->
+    case {d_packet(Data), StateName} of
+        {{msg, N, Box}, connected} -> handle_msg(N, Box, State);
+        {{vouch, K, N, Box}, accepting} -> handle_vouch(K, N, Box, State);
+        {{cookie, N, Box}, initiating} -> handle_cookie(N, Box, State)
+    end.
 
 handle_tcp_closed(_Statename, State) ->
     {next_state, closed, maps:remove(socket, State)}.
@@ -325,7 +323,7 @@ send_msg(M, #{ socket := Socket, secret_key := Ks, peer_public_key := P, c := No
 
 %% COMMAND GENERATION
 %% 
-%% The c_* functions produce messages for the wire. They are kept here
+%% The e_* functions produce messages for the wire. They are kept here
 %% for easy perusal. Note that while the arguments are terse, they do have
 %% meaning since they reflect the meaning of the protocol specification. For
 %% instance, the argument ECs means (E)phermeral (C)lient (s)ecret key.
