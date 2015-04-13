@@ -245,8 +245,8 @@ handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry 
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
             %% Everything seems to be in order, go to connected state
             NState = State#{ recv_queue => queue:new(), buf => undefined, 
-                             secret_key => ESs, peer_public_key => EC, c => 0, rc => 0, side => server },
-            {next_state, connected, reply(ok, NState)};  
+                             secret_key => ESs, peer_public_key => EC, c => 2, rc => 2, side => server },
+            {next_state, connected, reply(ok, NState)};
         {error, _Reason} = Err ->
             {stop, Err, State}
     end.
@@ -260,9 +260,9 @@ handle_cookie(N, Box, #{ public_key := EC, secret_key := ECs, peer_lt_public_key
 			peer_public_key => ES,
 			recv_queue => queue:new(),
 			buf => undefined,
-			c => 0,
+			c => 2,
 			side => client,
-			rc => 0 })};
+			rc => 2 })};
         {error, _Reason} = Err ->
             {stop, normal, reply(Err, State)}
     end.
