@@ -1,7 +1,7 @@
 -module(curve_tun_connection).
 -behaviour(gen_fsm).
 
--export([connect/3, accept/1, listen/2, send/2, close/1, recv/1, controlling_process/2]).
+-export([connect/3, accept/1, accept/2, listen/2, send/2, close/1, recv/1, recv/2, controlling_process/2]).
 
 %% Private callbacks
 -export([start_fsm/0, start_link/1]).
@@ -38,8 +38,11 @@ connect(Address, Port, Options) ->
 send(#curve_tun_socket { pid = Pid }, Msg) ->
     gen_fsm:sync_send_event(Pid, {send, Msg}).
 
-recv(#curve_tun_socket { pid = Pid }) ->
-    gen_fsm:sync_send_event(Pid, recv).
+recv(#curve_tun_socket { pid = Pid }, Timeout) ->
+    gen_fsm:sync_send_event(Pid, recv, Timeout).
+
+recv(State) ->
+    recv(State, 5000).
 
 close(#curve_tun_socket { pid = Pid }) ->
     gen_fsm:sync_send_event(Pid, close).
@@ -51,14 +54,17 @@ listen(Port, Opts) ->
         {error, Reason} -> {error, Reason}
     end.
 
-accept(#curve_tun_lsock { lsock = LSock}) ->
+accept(#curve_tun_lsock { lsock = LSock}, Timeout) ->
     {ok, Pid} = start_fsm(),
-    case gen_fsm:sync_send_event(Pid, {accept, LSock}) of
+    case gen_fsm:sync_send_event(Pid, {accept, LSock}, Timeout) of
        ok ->
            {ok, #curve_tun_socket { pid = Pid }};
        {error, Reason} ->
            {error, Reason}
    end.
+
+accept(State) ->
+   accept(State, 5000).
 
 controlling_process(#curve_tun_socket { pid = Pid }, Controller) ->
     gen_fsm:sync_send_all_state_event(Pid, {controlling_process, Controller}).
