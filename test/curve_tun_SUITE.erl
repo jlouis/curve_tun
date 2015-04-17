@@ -59,8 +59,12 @@ send_recv(Config) ->
 %% -------------------------------------
 join([]) -> ok;
 join([P | Next]) ->
+    MRef = monitor(process, P),
     receive
-        {P, ok} -> join(Next);
+        {'DOWN', MRef, _, _, Info} ->
+            ct:fail({'DOWN', P, Info});
+        {P, ok} ->
+            demonitor(MRef, [flush]), join(Next);
         {P, {error, Err}} -> ct:fail(Err)
    after ?TIMEOUT ->
        ct:fail(timeout)
