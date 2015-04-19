@@ -13,6 +13,7 @@
 	closed/2, closed/3,
 	connected/2, connected/3,
 	initiating/2, initiating/3,
+        vouched/2, vouched/3,
 	ready/2, ready/3
 ]).
 
@@ -95,7 +96,7 @@ ready({accept, LSock}, From, #{ vault := Vault} = State) ->
         {error, Reason} ->
             {stop, normal, {error, Reason}, ready, State};
         {ok, Socket} ->
-            InitState = State#{ socket => Socket },
+            InitState = State#{ socket => Socket, md => [] },
             ok = inet:setopts(Socket, [{active, once}]),
             {ok, EC} = recv_hello(InitState),
             %% Once ES is in the hands of the client, the server doesn't need it anymore
@@ -137,6 +138,12 @@ initiating(_Msg, _From, _State) ->
     {stop, argh, ready}.
 
 initiating(_Msg, _) ->
+    {stop, argh, ready}.
+
+vouched(_Msg, _From, _State) ->
+    {stop, argh, ready}.
+
+vouched(_Msg, _) ->
     {stop, argh, ready}.
 
 closed(_Msg, _State) ->
@@ -243,20 +250,29 @@ handle_msg(N, Box, #{
     {ok, Msg} = enacl:box_open(Box, Nonce, P, Ks),
     process_recv_queue(State#{ buf := Msg, rc := N+1 }).
 
-handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry } = State) ->
+handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry, md := MDOut } = State) ->
     case unpack_cookie(K) of
         {ok, EC, ESs} ->
             Nonce = st_nonce(initiate, client, 1),
-            {ok, <<C:32/binary, NonceLT:16/binary, Vouch/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
+            {ok, <<C:32/binary, NonceLT:16/binary, Vouch:48/binary, MetaData/binary>>} = enacl:box_open(Box, Nonce, EC, ESs),
+            MDIn = d_metadata(MetaData),
             true = Registry:verify(Sock, C),
             VNonce = lt_nonce(client, NonceLT),
             {ok, <<EC:32/binary>>} = Vault:box_open(Vouch, VNonce, C),
-            %% Everything seems to be in order, go to connected state
-            NState = State#{ recv_queue => queue:new(), buf => undefined, 
-                             secret_key => ESs, peer_public_key => EC, c => 2, rc => 2, side => server },
-            {next_state, connected, reply(ok, NState)};
+
+            case gen_tcp:send(Sock, e_ready(MDOut, 2, EC, ESs)) of
+                ok ->
+                    %% Everything seems to be in order, go to connected state
+                    NState = State#{ recv_queue => queue:new(), buf => undefined, rmd => MDIn,
+                                     secret_key => ESs, peer_public_key => EC, c => 3, rc => 2, side => server },
+                    {next_state, connected, reply(ok, NState)};
+                {error, _Reason} = Err ->
+                    {stop, Err, State}
+            end;
+
         {error, _Reason} = Err ->
             {stop, Err, State}
+
     end.
 
 handle_cookie(N, Box, #{ public_key := EC, secret_key := ECs, peer_lt_public_key := S, socket := Socket, vault := Vault } = State) ->
@@ -264,22 +280,38 @@ handle_cookie(N, Box, #{ public_key := EC, secret_key := ECs, peer_lt_public_key
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
     case gen_tcp:send(Socket, e_vouch(K, EC, S, Vault, 1, ES, ECs)) of
         ok ->
-            {next_state, connected, reply(ok, State#{
+            ok = inet:setopts(Socket, [{active, once}]),
+            {next_state, vouched, State#{
 			peer_public_key => ES,
 			recv_queue => queue:new(),
 			buf => undefined,
 			c => 2,
 			side => client,
-			rc => 2 })};
+			rc => 2 }};
         {error, _Reason} = Err ->
             {stop, normal, reply(Err, State)}
     end.
+
+handle_ready(N, Box, State = #{
+                       secret_key := Ks,
+                       peer_public_key := P,
+                       rc := N,
+                       side := client,
+                       socket := Sock }) ->
+    Nonce = st_nonce(ready, server, N),
+    {ok, MetaData} = enacl:box_open(Box, Nonce, P, Ks),
+    ServersMD = d_metadata(MetaData),
+    %% deal with server's MD
+    ok = inet:setopts(Sock, [{active, once}]),
+    {next_state, connected, reply(ok, State#{ rc := N+1, rmd => ServersMD })}.
+
 
 handle_tcp(Data, StateName, State) ->
     case {d_packet(Data), StateName} of
         {{msg, N, Box}, connected} -> handle_msg(N, Box, State);
         {{vouch, K, N, Box}, accepting} -> handle_vouch(K, N, Box, State);
-        {{cookie, N, Box}, initiating} -> handle_cookie(N, Box, State)
+        {{cookie, N, Box}, initiating} -> handle_cookie(N, Box, State);
+        {{ready, N, Box}, vouched} -> handle_ready(N, Box, State)
     end.
 
 handle_tcp_closed(_Statename, State) ->
@@ -294,7 +326,8 @@ st_nonce(initiate, client, N) -> <<"CurveCP-client-I", N:64/integer>>;
 st_nonce(msg, client, N) -> <<"CurveCP-client-M", N:64/integer>>;
 st_nonce(hello, server, N) -> <<"CurveCP-server-H", N:64/integer>>;
 st_nonce(initiate, server, N) -> <<"CurveCP-server-I", N:64/integer>>;
-st_nonce(msg, server, N) -> <<"CurveCP-server-M", N:64/integer>>.
+st_nonce(msg, server, N) -> <<"CurveCP-server-M", N:64/integer>>;
+st_nonce(ready, server, N) -> <<"CurveCP-server-R", N:64/integer>>.
 
 lt_nonce(minute_k, N) -> <<"minute-k", N/binary>>;
 lt_nonce(client, N) -> <<"CurveCPV", N/binary>>;
@@ -351,7 +384,12 @@ e_vouch(Kookie, VMsg, S, Vault, N, ES, ECs) when byte_size(Kookie) == 96 ->
     STNonce = st_nonce(initiate, client, N),
     Box = enacl:box(<<C:32/binary, NonceBase/binary, VouchBox/binary>>, STNonce, ES, ECs),
     <<108,9,175,178,138,169,250,253, Kookie/binary, N:64/integer, Box/binary>>.
-    
+
+e_ready(MetaData, NonceCount, PK, SK) ->
+    Nonce = st_nonce(ready, server, NonceCount),
+    Box = enacl:box(e_metadata(MetaData), Nonce, PK, SK),
+    <<109,9,175,178,138,169,250,253, NonceCount:64/integer, Box/binary>>.
+
 e_msg(M, Side, NonceCount, PK, SK) ->
     Nonce = st_nonce(msg, Side, NonceCount),
     Box = enacl:box(M, Nonce, PK, SK),
@@ -370,6 +408,32 @@ d_packet(<<28,69,220,185,65,192,227,246,  N:16/binary, Box/binary>>) ->
     {cookie, N, Box};
 d_packet(<<108,9,175,178,138,169,250,252, EC:32/binary, N:64/integer, Box/binary>>) ->
     {hello, EC, N, Box};
+d_packet(<<109,9,175,178,138,169,250,253, N:64/integer, Box/binary>>) ->
+    {ready, N, Box};
 d_packet(_) ->
     unknown.
     
+
+%% METADATA CODING
+d_metadata(<<>>) ->
+    [];
+d_metadata(<<N, Rest/binary>>) ->
+    d_metadata(N, Rest, []).
+
+d_metadata(0, <<>>, L) ->
+    lists:reverse(L);
+d_metadata(N, <<K, Key:K, V:16, Value:V, Rest/binary>>, L) ->
+    d_metadata(N-1, Rest, [{Key,Value}|L]).
+
+e_metadata(List) when length(List) < 16#100 ->
+    N = length(List),
+    erlang:iolist_to_binary( [ N | e_metadata(List, []) ] ).
+
+e_metadata([], Data) ->
+    Data;
+e_metadata([{Key,Value}|Rest], Data)
+  when byte_size(Key) < 16#100, byte_size(Value) < 16#10000 ->
+    K = byte_size(Key),
+    V = byte_size(Value),
+    e_metadata(Rest, [<< K:8, Key/binary, V:16, Value/binary >> | Data ]).
+

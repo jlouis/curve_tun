@@ -40,21 +40,23 @@ It assumed the client already have access to the public key of the server, `S` a
 | 2. Hello: send `(EC, Box[0'](ECs -> S))` | |
 | | 3. Generate `(ES, ESs)` |
 | | 4. Cookie ack: send `Box[ES, K](Ss -> EC)` |
-| 5. Vouch: send `(K, Box[C,V](EC -> ES))` | |
+| 5. Vouch: send `(K, Box[C,V,MD](EC -> ES))` | |
+| | 6. Ready: send `Box[MD](ES->EC)` |
 | *bi-directional flow from here on out* | |
-| 6. Msg: send `Box[…](ECs -> ES)` | |
-| | 7. Msg: send `Box[…](ESs -> EC)` |
+| 7. Msg: send `Box[…](ECs -> ES)` | |
+| | 8. Msg: send `Box[…](ESs -> EC)` |
 
 1. The client generates a new keypair. This keypair is ephemeral for the lifetime of the connection. Once the connection dies, the secret key of this connection is thrown away and since it never leaves the client, it means that nobody is able to understand messages on the connection from then on. This construction provides forward secrecy for the client.
 
 2. The client advertises the ephemeral public key and boxes a set zero-values.
 3. The server generates a keypair. This is also ephemeral, but on the server side. It provides forward secrecy for the server-end.
 4. The server generates a cookie `K = SecretBox[EC,ESs](Ts)` where `Ts` is a secret minute key only the server knows. In other words, this is a cryptographic box which can only be understood by the holder of `Ts`. In principle, this protocol doesn't really need these kind of SYN-cookies, but it does protect the protocol against an eventual weakness in TCP and also it makes it easier to adapt the code base to CurveCP later if we want to do that. So it is kept in this protocol. The cookie doesn't need storage on the server side, which means it can't be flooded. The key `Ts` changes from time to time.
-5. The client reflects the cookie and *vouches* for its key. Here `V = Box[EC](Cs -> S)`.
-6. A message can be sent from the client to the server. It has to be boxed properly.
-7. A message can be sent from the server to the client.
+5. The client reflects the cookie and *vouches* for its key. Here `V = Box[EC](Cs -> S)`. This message also includes the client's metadata `MD`
+6. The server sends it's metadata `MD`
+7. A message can be sent from the client to the server. It has to be boxed properly.
+8. A message can be sent from the server to the client.
 
-From step 6 and onwards, the message flow is bidirectional. Until connection termination, which is simply just terminating the TCP connection like one would normally do.
+From step 7 and onwards, the message flow is bidirectional. Until connection termination, which is simply just terminating the TCP connection like one would normally do.
 
 # Detailed protocol messaging:
 
@@ -109,8 +111,19 @@ Vouch packets from the client to the server have the following structure:
 	Nonce = short_term_nonce(initiate, client),
 	NonceLT = long_term_nonce(),
 	V = box(<<EC/binary>>, NonceLT:16/binary, S, Cs),
-	Box = box(<<C:32/binary, NonceLT:24/binary, V:48/binary>>, ES, ECs),
+	MD = e_metadata([{Key,Value}, ...]),
+	Box = box(<<C:32/binary, NonceLT:24/binary, V:48/binary, MD/binary>>, ES, ECs),
 	Initiate = <<108,9,175,178,138,169,250,253, K:96/binary, Nonce:8/binary, Box/binary>>
+	
+### Ready packets
+
+Ready packets from the server to the client has the following structure:
+
+	Nonce = short_term_nonce(ready, server),
+	MD = e_metadata([{Key,Value}, ...]),
+	Box = box(MD, ES, ECs),
+	Initiate = <<109,9,175,178,138,169,250,253, Nonce:8/binary, Box/binary>>
+
 
 ### Message packets
 
@@ -135,7 +148,7 @@ Like in CurveCP, there are four different nonce types involved:
 | The servers long-term keypair `(S, Ss)`. The client knows `S` before making a connection | The string `<<"CurveCPK">>` follow by a 16 byte compressed nonce |
 | The clients long-term keypair `(C, Cs)`. Some servers can differentiate connections based on `C` | The string `<<"CurveCPV">>` followed by a 16 byte compressed nonce |
 | The servers short-term keypair `(ES, ESs)`. This keypair provides forward secrecy. | The string `<<"CurveCP-server-M">>` followed by a 8 byte compressed nonce. This nonce represents a 64-bit *big-endian* number |
-| The clients short-term keypair `(EC, ECs)`. Specific to the connection. | The string `<<"CurveCP-client-">>` followed by `<<"H">>`, `<<"I">>` and `<<"M">>` for Hello, Initiate and Message packets respectively. Then a 8 byte compressed nonce representing a 64 bit *big-endian* number |
+| The clients short-term keypair `(EC, ECs)`. Specific to the connection. | The string `<<"CurveCP-client-">>` followed by `<<"H">>`, `<<"I">>`, `<<"R">>` and `<<"M">>` for Hello, Initiate, Ready and Message packets respectively. Then a 8 byte compressed nonce representing a 64 bit *big-endian* number |
 
 ## Short term keys
 
@@ -143,6 +156,7 @@ For short-term client keys you generate the following nonce for a message type `
 
 	msg_type(hello) -> <<"H">>;
 	msg_type(initiate) -> <<"I">>;
+	msg_type(ready) -> <<"R">>;
 	msg_type(msg) -> <<"M">>.
 	
 	Type = msg_type(T),
@@ -180,4 +194,20 @@ A client rejects all short-term nonces which moves backward in time. That is, th
 Increments does not have to be 1 and the stream doesn't have to start from 0. Clients must be prepared for this.
 
 For long-term keys, you can't reject the nonce, since encryption makes them indistinguishable from random values.
+
+## Metadata
+
+Metadata is encoded as
+
+````
+   N = length(MD),
+   KVs = [ begin
+             K = byte_size(Key), V = byte_size(Value),
+             << K:8, Key/binary, V:16, Value/binary >>
+           end
+   ] || {Key,Value} <- MD ],
+   iolist_to_binary( [N | KVs] )
+````
+
+Keys must be less than 256 bytes, values must be < 16#10000 bytes (16k).
 
