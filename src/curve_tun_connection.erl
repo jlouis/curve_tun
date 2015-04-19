@@ -141,7 +141,9 @@ initiating(_Msg, _) ->
 
 closed(_Msg, _State) ->
     {stop, argh, closed}.
-    
+
+closed(close, _From, State) ->
+    {stop, normal, ok, State};
 closed({send, _}, _From, State) ->
     {reply, {error, closed}, State}.
 
