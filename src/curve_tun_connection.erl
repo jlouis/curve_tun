@@ -1,7 +1,10 @@
 -module(curve_tun_connection).
 -behaviour(gen_fsm).
 
--export([connect/3, accept/1, accept/2, listen/2, send/2, close/1, recv/1, recv/2, controlling_process/2]).
+-export([connect/3, accept/1, accept/2, listen/2, send/2, close/1,
+         recv/1, recv/2, controlling_process/2,
+         metadata/1
+        ]).
 
 %% Private callbacks
 -export([start_fsm/0, start_link/1]).
@@ -17,7 +20,7 @@
 	ready/2, ready/3
 ]).
 
--record(curve_tun_lsock, { lsock :: port () }).
+-record(curve_tun_lsock, { lsock :: port (), metadata :: [{binary(),binary()}] }).
 
 -record(curve_tun_socket, { pid :: pid() }).
 
@@ -49,15 +52,16 @@ close(#curve_tun_socket { pid = Pid }) ->
     gen_fsm:sync_send_event(Pid, close).
 
 listen(Port, Opts) ->
-    Options = [binary, {packet, 2}, {active, false} | Opts],
+    {SocketOpts, #{ metadata := MD }} = filter_options(Opts),
+    Options = [binary, {packet, 2}, {active, false} | SocketOpts],
     case gen_tcp:listen(Port, Options) of
-        {ok, LSock} -> {ok, #curve_tun_lsock { lsock = LSock }};
+        {ok, LSock} -> {ok, #curve_tun_lsock { lsock = LSock, metadata = MD }};
         {error, Reason} -> {error, Reason}
     end.
 
-accept(#curve_tun_lsock { lsock = LSock}, Timeout) ->
+accept(#curve_tun_lsock { lsock = LSock, metadata = MD }, Timeout) ->
     {ok, Pid} = start_fsm(),
-    case gen_fsm:sync_send_event(Pid, {accept, LSock}, Timeout) of
+    case gen_fsm:sync_send_event(Pid, {accept, LSock, MD}, Timeout) of
        ok ->
            {ok, #curve_tun_socket { pid = Pid }};
        {error, Reason} ->
@@ -69,6 +73,9 @@ accept(State) ->
 
 controlling_process(#curve_tun_socket { pid = Pid }, Controller) ->
     gen_fsm:sync_send_all_state_event(Pid, {controlling_process, Controller}).
+
+metadata(#curve_tun_socket{ pid=Pid}) ->
+    gen_fsm:sync_send_event(Pid, metadata).
 
 %% @private
 start_fsm() ->
@@ -91,12 +98,12 @@ init([Controller]) ->
 
 
 %% @private
-ready({accept, LSock}, From, #{ vault := Vault} = State) ->
+ready({accept, LSock, MetaData}, From, #{ vault := Vault} = State) ->
     case gen_tcp:accept(LSock) of
         {error, Reason} ->
             {stop, normal, {error, Reason}, ready, State};
         {ok, Socket} ->
-            InitState = State#{ socket => Socket, md => [] },
+            InitState = State#{ socket => Socket, md => MetaData },
             ok = inet:setopts(Socket, [{active, once}]),
             {ok, EC} = recv_hello(InitState),
             %% Once ES is in the hands of the client, the server doesn't need it anymore
@@ -110,8 +117,8 @@ ready({accept, LSock}, From, #{ vault := Vault} = State) ->
            end
     end;
 ready({connect, Address, Port, Options}, From, State) ->
-    TcpOpts = lists:keydelete(key, 1, [{packet, 2}, binary, {active, false} | Options]),
-    S = proplists:get_value(key, Options),
+    {SocketOpts, #{ key := S, metadata := MD }} = filter_options(Options),
+    TcpOpts = [{packet, 2}, binary, {active, false} | SocketOpts],
     case gen_tcp:connect(Address, Port, TcpOpts) of
         {error, Reason} ->
             {stop, normal, {error, Reason}, State};
@@ -125,7 +132,8 @@ ready({connect, Address, Port, Options}, From, State) ->
                     	peer_lt_public_key => S,
                     	public_key => EC,
                     	secret_key => ECs,
-                    	socket => Socket }};
+                    	socket => Socket,
+                        md => MD }};
                 {error, Reason} ->
                     {stop, normal, {error, Reason}, State}
             end
@@ -167,7 +175,9 @@ connected({send, M}, _From, #{ socket := Socket, secret_key := Ks, peer_public_k
     case gen_tcp:send(Socket, e_msg(M, Side, NonceCount, P, Ks)) of
          ok -> {reply, ok, connected, State#{ c := NonceCount + 1}};
          {error, _Reason} = Err -> {reply, Err, connected, State}
-    end.
+    end;
+connected(metadata, _From, #{ rmd := MetaData } = State) ->
+    {reply, {ok, MetaData}, connected, State}.
 
 handle_sync_event({controlling_process, Controller}, {PrevController, _Tag}, Statename,
         #{ controller := {PrevController, MRef} } = State) ->
@@ -275,10 +285,10 @@ handle_vouch(K, 1, Box, #{ socket := Sock, vault := Vault, registry := Registry,
 
     end.
 
-handle_cookie(N, Box, #{ public_key := EC, secret_key := ECs, peer_lt_public_key := S, socket := Socket, vault := Vault } = State) ->
+handle_cookie(N, Box, #{ public_key := EC, secret_key := ECs, peer_lt_public_key := S, socket := Socket, vault := Vault, md := MD } = State) ->
     Nonce = lt_nonce(server, N),
     {ok, <<ES:32/binary, K/binary>>} = enacl:box_open(Box, Nonce, S, ECs),
-    case gen_tcp:send(Socket, e_vouch(K, EC, S, Vault, 1, ES, ECs)) of
+    case gen_tcp:send(Socket, e_vouch(K, EC, S, Vault, 1, ES, ECs, MD)) of
         ok ->
             ok = inet:setopts(Socket, [{active, once}]),
             {next_state, vouched, State#{
@@ -373,7 +383,7 @@ e_cookie(EC, ES, ESs, Vault) ->
     Box = Vault:box(<<ES:32/binary, K/binary>>, BoxNonce, EC),
     <<28,69,220,185,65,192,227,246, SafeNonce:16/binary, Box/binary>>.
 
-e_vouch(Kookie, VMsg, S, Vault, N, ES, ECs) when byte_size(Kookie) == 96 ->
+e_vouch(Kookie, VMsg, S, Vault, N, ES, ECs, MD) when byte_size(Kookie) == 96 ->
     NonceBase = Vault:safe_nonce(),
 
     %% Produce the box for the vouch
@@ -382,7 +392,8 @@ e_vouch(Kookie, VMsg, S, Vault, N, ES, ECs) when byte_size(Kookie) == 96 ->
     C = Vault:public_key(),
     
     STNonce = st_nonce(initiate, client, N),
-    Box = enacl:box(<<C:32/binary, NonceBase/binary, VouchBox/binary>>, STNonce, ES, ECs),
+    MetaData = e_metadata(MD),
+    Box = enacl:box(<<C:32/binary, NonceBase/binary, VouchBox:48/binary, MetaData/binary>>, STNonce, ES, ECs),
     <<108,9,175,178,138,169,250,253, Kookie/binary, N:64/integer, Box/binary>>.
 
 e_ready(MetaData, NonceCount, PK, SK) ->
@@ -422,7 +433,7 @@ d_metadata(<<N, Rest/binary>>) ->
 
 d_metadata(0, <<>>, L) ->
     lists:reverse(L);
-d_metadata(N, <<K, Key:K, V:16, Value:V, Rest/binary>>, L) ->
+d_metadata(N, <<K:8, Key:K/binary, V:16, Value:V/binary, Rest/binary>>, L) ->
     d_metadata(N-1, Rest, [{Key,Value}|L]).
 
 e_metadata(List) when length(List) < 16#100 ->
@@ -432,8 +443,24 @@ e_metadata(List) when length(List) < 16#100 ->
 e_metadata([], Data) ->
     Data;
 e_metadata([{Key,Value}|Rest], Data)
-  when byte_size(Key) < 16#100, byte_size(Value) < 16#10000 ->
+  when byte_size(Key) < 16#100,
+       byte_size(Value) < 16#10000 ->
     K = byte_size(Key),
     V = byte_size(Value),
     e_metadata(Rest, [<< K:8, Key/binary, V:16, Value/binary >> | Data ]).
 
+
+%% Handle options.  This splits options into socket options and curve_tun options.
+
+filter_options(List) ->
+    filter_options(List, [], #{ metadata=>[] }).
+
+filter_options([], SO, CTO) ->
+    {lists:reverse(SO), CTO};
+filter_options([KV={K,V}|Rest], SocketOpts, CurveOpts) ->
+    case lists:member(K, [metadata, key]) of
+        true ->
+            filter_options(Rest, SocketOpts, maps:put(K,V,CurveOpts));
+        false ->
+            filter_options(Rest, [KV|SocketOpts], CurveOpts)
+    end.
