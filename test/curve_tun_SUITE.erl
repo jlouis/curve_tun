@@ -59,8 +59,12 @@ send_recv(Config) ->
 %% -------------------------------------
 join([]) -> ok;
 join([P | Next]) ->
+    MRef = monitor(process, P),
     receive
-        {P, ok} -> join(Next);
+        {'DOWN', MRef, _, _, Info} ->
+            ct:fail({'DOWN', P, Info});
+        {P, ok} ->
+            demonitor(MRef, [flush]), join(Next);
         {P, {error, Err}} -> ct:fail(Err)
    after ?TIMEOUT ->
        ct:fail(timeout)
@@ -73,7 +77,9 @@ sender(Config) ->
         ct:sleep(10),
         sleep(),
         {ok, Sock} = curve_tun:connect(?config(host, Config), ?config(port, Config),
-            [{key, ?config(receiver_pk, Config)}]),
+            [{key, ?config(receiver_pk, Config)}, {metadata, [{<<"a">>, <<"A">>}]}]),
+        sleep(),
+        {ok, [{<<"b">>, <<"B">>}]} = curve_tun:metadata(Sock),
         sleep(),
         ok = curve_tun:send(Sock, <<"1">>),
         sleep(),
@@ -90,9 +96,11 @@ receiver(Config) ->
     spawn(fun() ->
         random:seed(erlang:now()),
         ok = curve_tun_simple_registry:register({127,0,0,1},<<81,13,101,52,29,109,136,196,86,91,34,91,3,19,150,3,215, 43,210,9,242,146,119,188,153,245,78,232,94,113,37,47>>),
-        {ok, LSock} = curve_tun:listen(?config(port, Config), [{reuseaddr, true}]),
+        {ok, LSock} = curve_tun:listen(?config(port, Config), [{reuseaddr, true}, {metadata, [{<<"b">>, <<"B">>}]}]),
         sleep(),
         {ok, Sock} = curve_tun:accept(LSock),
+        sleep(),
+        {ok, [{<<"a">>, <<"A">>}]} = curve_tun:metadata(Sock),
         sleep(),
         <<"1">> = curve_tun:recv(Sock),
         sleep(),

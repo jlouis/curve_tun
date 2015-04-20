@@ -43,7 +43,7 @@ The registry must be protected against forgery on the endpoint. But apart from t
 Connection processes implement an FSM which runs the connection system. There are the following two possible transition chains:
 
 	server: ready -> accepting -> connected
-	client: ready -> initiating -> connected
+	client: ready -> initiating -> vouched -> connected
 	
 for servers and clients respectively. Furthermore, there is a 'closed' state we can transition to from any state if the TCP connection is shut down.
 
